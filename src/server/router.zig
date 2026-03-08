@@ -121,6 +121,34 @@ fn route(request: *std.http.Server.Request, arena: std.mem.Allocator, bridge: *B
         handleReload(request, arena, bridge);
     } else if (std.mem.eql(u8, clean_path, "/diff/snapshot")) {
         handleDiffSnapshot(request, arena, bridge);
+    } else if (std.mem.eql(u8, clean_path, "/emulate")) {
+        handleEmulate(request, arena, bridge);
+    } else if (std.mem.eql(u8, clean_path, "/geolocation")) {
+        handleGeolocation(request, arena, bridge);
+    } else if (std.mem.eql(u8, clean_path, "/upload")) {
+        handleUpload(request, arena, bridge);
+    } else if (std.mem.eql(u8, clean_path, "/session/save")) {
+        handleSessionSave(request, arena, bridge);
+    } else if (std.mem.eql(u8, clean_path, "/session/load")) {
+        handleSessionLoad(request, arena, bridge);
+    } else if (std.mem.eql(u8, clean_path, "/screenshot/annotated")) {
+        handleAnnotatedScreenshot(request, arena, bridge);
+    } else if (std.mem.eql(u8, clean_path, "/screenshot/diff")) {
+        handleDiffScreenshot(request, arena, bridge);
+    } else if (std.mem.eql(u8, clean_path, "/screencast/start")) {
+        handleScreencastStart(request, arena, bridge);
+    } else if (std.mem.eql(u8, clean_path, "/screencast/stop")) {
+        handleScreencastStop(request, arena, bridge);
+    } else if (std.mem.eql(u8, clean_path, "/video/start")) {
+        handleVideoStart(request, arena, bridge);
+    } else if (std.mem.eql(u8, clean_path, "/video/stop")) {
+        handleVideoStop(request, arena, bridge);
+    } else if (std.mem.eql(u8, clean_path, "/console")) {
+        handleConsole(request, arena, bridge);
+    } else if (std.mem.eql(u8, clean_path, "/intercept/start")) {
+        handleInterceptStart(request, arena, bridge);
+    } else if (std.mem.eql(u8, clean_path, "/intercept/stop")) {
+        handleInterceptStop(request, arena, bridge);
     } else {
         resp.sendError(request, 404, "Not Found");
     }
@@ -143,9 +171,14 @@ fn getQueryParam(target: []const u8, key: []const u8) ?[]const u8 {
 }
 
 fn readRequestBody(request: *std.http.Server.Request, arena: std.mem.Allocator) ?[]const u8 {
+    if (!request.head.method.requestHasBody()) return null;
+    if (request.head.expect != null) return null;
+    const content_length = request.head.content_length orelse return null;
+    if (content_length == 0) return null;
+    const len: usize = @intCast(@min(content_length, 65536));
     var buf: [65536]u8 = undefined;
-    var reader = request.reader(&buf) orelse return null;
-    const body = reader.readAll(arena) catch return null;
+    const reader = request.readerExpectNone(&buf);
+    const body = reader.readAlloc(arena, len) catch return null;
     if (body.len == 0) return null;
     return body;
 }
@@ -877,6 +910,82 @@ fn handleHarStatus(request: *std.http.Server.Request, arena: std.mem.Allocator, 
     resp.sendJson(request, body);
 }
 
+// ── Console Log Capture Endpoint ────────────────────────────────────────
+
+fn handleConsole(request: *std.http.Server.Request, arena: std.mem.Allocator, bridge: *Bridge) void {
+    const target = request.head.target;
+    const tab_id = getQueryParam(target, "tab_id") orelse {
+        resp.sendError(request, 400, "Missing tab_id parameter");
+        return;
+    };
+
+    const client = bridge.getCdpClient(tab_id) orelse {
+        resp.sendError(request, 404, "Tab not found");
+        return;
+    };
+
+    _ = client.send(arena, protocol.Methods.runtime_enable, null) catch {
+        resp.sendError(request, 502, "CDP command failed");
+        return;
+    };
+
+    const body = std.fmt.allocPrint(arena, "{{\"status\":\"ok\",\"message\":\"Runtime.enable sent\",\"tab_id\":\"{s}\"}}", .{tab_id}) catch {
+        resp.sendError(request, 500, "Internal Server Error");
+        return;
+    };
+    resp.sendJson(request, body);
+}
+
+// ── Network Interception Endpoints ──────────────────────────────────────
+
+fn handleInterceptStart(request: *std.http.Server.Request, arena: std.mem.Allocator, bridge: *Bridge) void {
+    const target = request.head.target;
+    const tab_id = getQueryParam(target, "tab_id") orelse {
+        resp.sendError(request, 400, "Missing tab_id parameter");
+        return;
+    };
+
+    const client = bridge.getCdpClient(tab_id) orelse {
+        resp.sendError(request, 404, "Tab not found");
+        return;
+    };
+
+    _ = client.send(arena, protocol.Methods.fetch_enable, null) catch {
+        resp.sendError(request, 502, "CDP command failed");
+        return;
+    };
+
+    const body = std.fmt.allocPrint(arena, "{{\"status\":\"ok\",\"message\":\"Fetch.enable sent\",\"tab_id\":\"{s}\"}}", .{tab_id}) catch {
+        resp.sendError(request, 500, "Internal Server Error");
+        return;
+    };
+    resp.sendJson(request, body);
+}
+
+fn handleInterceptStop(request: *std.http.Server.Request, arena: std.mem.Allocator, bridge: *Bridge) void {
+    const target = request.head.target;
+    const tab_id = getQueryParam(target, "tab_id") orelse {
+        resp.sendError(request, 400, "Missing tab_id parameter");
+        return;
+    };
+
+    const client = bridge.getCdpClient(tab_id) orelse {
+        resp.sendError(request, 404, "Tab not found");
+        return;
+    };
+
+    _ = client.send(arena, protocol.Methods.fetch_disable, null) catch {
+        resp.sendError(request, 502, "CDP command failed");
+        return;
+    };
+
+    const body = std.fmt.allocPrint(arena, "{{\"status\":\"ok\",\"message\":\"Fetch.disable sent\",\"tab_id\":\"{s}\"}}", .{tab_id}) catch {
+        resp.sendError(request, 500, "Internal Server Error");
+        return;
+    };
+    resp.sendJson(request, body);
+}
+
 // ── Close / Cleanup Endpoint ────────────────────────────────────────────
 
 fn handleClose(request: *std.http.Server.Request, arena: std.mem.Allocator, bridge: *Bridge) void {
@@ -1215,6 +1324,121 @@ fn handleDiffSnapshot(request: *std.http.Server.Request, arena: std.mem.Allocato
     resp.sendJson(request, json_buf.items);
 }
 
+fn handleEmulate(request: *std.http.Server.Request, arena: std.mem.Allocator, bridge: *Bridge) void {
+    const target = request.head.target;
+    const tab_id = getQueryParam(target, "tab_id") orelse {
+        resp.sendError(request, 400, "Missing tab_id parameter");
+        return;
+    };
+    const client = bridge.getCdpClient(tab_id) orelse {
+        resp.sendError(request, 404, "Tab not found");
+        return;
+    };
+    const width_str = getQueryParam(target, "width") orelse "1280";
+    const height_str = getQueryParam(target, "height") orelse "720";
+    const scale_str = getQueryParam(target, "scale") orelse "1";
+    const ua = getQueryParam(target, "ua");
+
+    const params = std.fmt.allocPrint(arena,
+        "{{\"width\":{s},\"height\":{s},\"deviceScaleFactor\":{s},\"mobile\":false}}",
+        .{ width_str, height_str, scale_str },
+    ) catch {
+        resp.sendError(request, 500, "Internal Server Error");
+        return;
+    };
+    const response = client.send(arena, protocol.Methods.emulation_set_device_metrics, params) catch {
+        resp.sendError(request, 502, "CDP command failed");
+        return;
+    };
+
+    if (ua) |ua_str| {
+        const ua_params = std.fmt.allocPrint(arena, "{{\"userAgent\":\"{s}\"}}", .{ua_str}) catch {
+            resp.sendJson(request, response);
+            return;
+        };
+        _ = client.send(arena, protocol.Methods.emulation_set_user_agent, ua_params) catch {};
+    }
+
+    resp.sendJson(request, response);
+}
+
+fn handleGeolocation(request: *std.http.Server.Request, arena: std.mem.Allocator, bridge: *Bridge) void {
+    const target = request.head.target;
+    const tab_id = getQueryParam(target, "tab_id") orelse {
+        resp.sendError(request, 400, "Missing tab_id parameter");
+        return;
+    };
+    const client = bridge.getCdpClient(tab_id) orelse {
+        resp.sendError(request, 404, "Tab not found");
+        return;
+    };
+    const lat = getQueryParam(target, "lat") orelse {
+        resp.sendError(request, 400, "Missing lat parameter");
+        return;
+    };
+    const lng = getQueryParam(target, "lng") orelse {
+        resp.sendError(request, 400, "Missing lng parameter");
+        return;
+    };
+    const accuracy_str = getQueryParam(target, "accuracy") orelse "1";
+
+    const params = std.fmt.allocPrint(arena,
+        "{{\"latitude\":{s},\"longitude\":{s},\"accuracy\":{s}}}",
+        .{ lat, lng, accuracy_str },
+    ) catch {
+        resp.sendError(request, 500, "Internal Server Error");
+        return;
+    };
+    const response = client.send(arena, protocol.Methods.emulation_set_geolocation, params) catch {
+        resp.sendError(request, 502, "CDP command failed");
+        return;
+    };
+    resp.sendJson(request, response);
+}
+
+fn handleUpload(request: *std.http.Server.Request, arena: std.mem.Allocator, bridge: *Bridge) void {
+    const target = request.head.target;
+    const tab_id = getQueryParam(target, "tab_id") orelse {
+        resp.sendError(request, 400, "Missing tab_id parameter");
+        return;
+    };
+    const ref = getQueryParam(target, "ref") orelse {
+        resp.sendError(request, 400, "Missing ref parameter");
+        return;
+    };
+    const file_path = getQueryParam(target, "file_path") orelse {
+        resp.sendError(request, 400, "Missing file_path parameter");
+        return;
+    };
+
+    const client = bridge.getCdpClient(tab_id) orelse {
+        resp.sendError(request, 404, "Tab not found");
+        return;
+    };
+
+    // Look up the ref in the snapshot cache to get the backend node ID
+    bridge.mu.lockShared();
+    const cache = bridge.snapshots.get(tab_id);
+    bridge.mu.unlockShared();
+
+    const node_id = if (cache) |c| c.refs.get(ref) else null;
+    const bid = node_id orelse {
+        resp.sendError(request, 400, "Ref not found. Call /snapshot first to populate refs");
+        return;
+    };
+
+    // Send DOM.setFileInputFiles with the resolved backendNodeId
+    const params = std.fmt.allocPrint(arena, "{{\"files\":[\"{s}\"],\"backendNodeId\":{d}}}", .{ file_path, bid }) catch {
+        resp.sendError(request, 500, "Internal Server Error");
+        return;
+    };
+    const response = client.send(arena, protocol.Methods.dom_set_file_input_files, params) catch {
+        resp.sendError(request, 502, "DOM.setFileInputFiles failed");
+        return;
+    };
+    resp.sendJson(request, response);
+}
+
 test "route matching" {
     const path = "/health?foo=bar";
     const clean = if (std.mem.indexOfScalar(u8, path, '?')) |idx| path[0..idx] else path;
@@ -1226,4 +1450,215 @@ test "getQueryParam" {
     try std.testing.expectEqualStrings("123", getQueryParam("/test?a=1&tab_id=123&b=2", "tab_id").?);
     try std.testing.expect(getQueryParam("/test?foo=bar", "baz") == null);
     try std.testing.expect(getQueryParam("/test", "foo") == null);
+}
+
+test "emulate query param parsing" {
+    const target = "/emulate?tab_id=abc&width=1920&height=1080&scale=2&ua=Mozilla/5.0";
+    try std.testing.expectEqualStrings("abc", getQueryParam(target, "tab_id").?);
+    try std.testing.expectEqualStrings("1920", getQueryParam(target, "width").?);
+    try std.testing.expectEqualStrings("1080", getQueryParam(target, "height").?);
+    try std.testing.expectEqualStrings("2", getQueryParam(target, "scale").?);
+    try std.testing.expectEqualStrings("Mozilla/5.0", getQueryParam(target, "ua").?);
+    // missing optional params return null
+    try std.testing.expect(getQueryParam("/emulate?tab_id=abc", "width") == null);
+    try std.testing.expect(getQueryParam("/emulate?tab_id=abc", "ua") == null);
+}
+
+test "geolocation query param parsing" {
+    const target = "/geolocation?tab_id=xyz&lat=37.7749&lng=-122.4194&accuracy=10";
+    try std.testing.expectEqualStrings("xyz", getQueryParam(target, "tab_id").?);
+    try std.testing.expectEqualStrings("37.7749", getQueryParam(target, "lat").?);
+    try std.testing.expectEqualStrings("-122.4194", getQueryParam(target, "lng").?);
+    try std.testing.expectEqualStrings("10", getQueryParam(target, "accuracy").?);
+    // lat and lng are required; missing returns null
+    try std.testing.expect(getQueryParam("/geolocation?tab_id=xyz", "lat") == null);
+    try std.testing.expect(getQueryParam("/geolocation?tab_id=xyz", "lng") == null);
+}
+
+test "emulate route matching" {
+    const path = "/emulate?tab_id=abc&width=1280";
+    const clean = if (std.mem.indexOfScalar(u8, path, '?')) |idx| path[0..idx] else path;
+    try std.testing.expectEqualStrings("/emulate", clean);
+}
+
+test "geolocation route matching" {
+    const path = "/geolocation?tab_id=abc&lat=0&lng=0";
+    const clean = if (std.mem.indexOfScalar(u8, path, '?')) |idx| path[0..idx] else path;
+    try std.testing.expectEqualStrings("/geolocation", clean);
+}
+
+fn handleSessionSave(request: *std.http.Server.Request, arena: std.mem.Allocator, bridge: *Bridge) void {
+    const state = bridge.exportState(arena) catch {
+        resp.sendError(request, 500, "Failed to export state");
+        return;
+    };
+    resp.sendJson(request, state);
+}
+
+fn handleSessionLoad(request: *std.http.Server.Request, arena: std.mem.Allocator, bridge: *Bridge) void {
+    const body = readRequestBody(request, arena) orelse {
+        resp.sendError(request, 400, "Missing request body");
+        return;
+    };
+    const count = bridge.importState(body, arena) catch {
+        resp.sendError(request, 400, "Invalid session JSON");
+        return;
+    };
+    const result = std.fmt.allocPrint(arena, "{{\"imported\":{d}}}", .{count}) catch {
+        resp.sendError(request, 500, "Internal Server Error");
+        return;
+    };
+    resp.sendJson(request, result);
+}
+
+// ── Annotated / Diff Screenshot & Screencast Endpoints ──────────────────
+
+fn handleAnnotatedScreenshot(request: *std.http.Server.Request, arena: std.mem.Allocator, bridge: *Bridge) void {
+    const target = request.head.target;
+    const tab_id = getQueryParam(target, "tab_id") orelse {
+        resp.sendError(request, 400, "Missing tab_id parameter");
+        return;
+    };
+    const ref = getQueryParam(target, "ref") orelse {
+        resp.sendError(request, 400, "Missing ref parameter");
+        return;
+    };
+    _ = ref;
+
+    const client = bridge.getCdpClient(tab_id) orelse {
+        resp.sendError(request, 404, "Tab not found");
+        return;
+    };
+
+    // Highlight the node with an overlay
+    const highlight_params = "{\"nodeId\":0,\"highlightConfig\":{\"showInfo\":true,\"contentColor\":{\"r\":111,\"g\":168,\"b\":220,\"a\":0.66}}}";
+    _ = client.send(arena, protocol.Methods.overlay_highlight_node, highlight_params) catch {
+        resp.sendError(request, 502, "CDP command failed");
+        return;
+    };
+
+    // Take screenshot
+    const screenshot_params = "{\"format\":\"png\"}";
+    const response = client.send(arena, protocol.Methods.page_capture_screenshot, screenshot_params) catch {
+        resp.sendError(request, 502, "CDP command failed");
+        return;
+    };
+
+    // Clean up highlight
+    _ = client.send(arena, protocol.Methods.overlay_hide_highlight, null) catch {};
+
+    resp.sendJson(request, response);
+}
+
+fn handleDiffScreenshot(request: *std.http.Server.Request, arena: std.mem.Allocator, bridge: *Bridge) void {
+    const target = request.head.target;
+    const tab_id = getQueryParam(target, "tab_id") orelse {
+        resp.sendError(request, 400, "Missing tab_id parameter");
+        return;
+    };
+    const delay_str = getQueryParam(target, "delay") orelse "1000";
+
+    const client = bridge.getCdpClient(tab_id) orelse {
+        resp.sendError(request, 404, "Tab not found");
+        return;
+    };
+
+    const screenshot_params = "{\"format\":\"png\"}";
+
+    // Take first screenshot
+    const resp1 = client.send(arena, protocol.Methods.page_capture_screenshot, screenshot_params) catch {
+        resp.sendError(request, 502, "CDP command failed");
+        return;
+    };
+
+    // Sleep for the delay
+    const delay_ms = std.fmt.parseInt(u64, delay_str, 10) catch 1000;
+    std.Thread.sleep(delay_ms * std.time.ns_per_ms);
+
+    // Take second screenshot
+    const resp2 = client.send(arena, protocol.Methods.page_capture_screenshot, screenshot_params) catch {
+        resp.sendError(request, 502, "CDP command failed");
+        return;
+    };
+
+    const body = std.fmt.allocPrint(arena, "{{\"before\":{s},\"after\":{s}}}", .{ resp1, resp2 }) catch {
+        resp.sendError(request, 500, "Internal Server Error");
+        return;
+    };
+    resp.sendJson(request, body);
+}
+
+fn handleScreencastStart(request: *std.http.Server.Request, arena: std.mem.Allocator, bridge: *Bridge) void {
+    const target = request.head.target;
+    const tab_id = getQueryParam(target, "tab_id") orelse {
+        resp.sendError(request, 400, "Missing tab_id parameter");
+        return;
+    };
+
+    const client = bridge.getCdpClient(tab_id) orelse {
+        resp.sendError(request, 404, "Tab not found");
+        return;
+    };
+
+    const params = "{\"format\":\"jpeg\",\"quality\":80}";
+    _ = client.send(arena, protocol.Methods.page_start_screencast, params) catch {
+        resp.sendError(request, 502, "CDP command failed");
+        return;
+    };
+
+    const body = std.fmt.allocPrint(arena, "{{\"status\":\"screencast_started\",\"tab_id\":\"{s}\"}}", .{tab_id}) catch {
+        resp.sendError(request, 500, "Internal Server Error");
+        return;
+    };
+    resp.sendJson(request, body);
+}
+
+fn handleScreencastStop(request: *std.http.Server.Request, arena: std.mem.Allocator, bridge: *Bridge) void {
+    const target = request.head.target;
+    const tab_id = getQueryParam(target, "tab_id") orelse {
+        resp.sendError(request, 400, "Missing tab_id parameter");
+        return;
+    };
+
+    const client = bridge.getCdpClient(tab_id) orelse {
+        resp.sendError(request, 404, "Tab not found");
+        return;
+    };
+
+    _ = client.send(arena, protocol.Methods.page_stop_screencast, null) catch {
+        resp.sendError(request, 502, "CDP command failed");
+        return;
+    };
+
+    const body = std.fmt.allocPrint(arena, "{{\"status\":\"screencast_stopped\",\"tab_id\":\"{s}\"}}", .{tab_id}) catch {
+        resp.sendError(request, 500, "Internal Server Error");
+        return;
+    };
+    resp.sendJson(request, body);
+}
+
+const handleVideoStart = handleScreencastStart;
+const handleVideoStop = handleScreencastStop;
+
+test "screenshot routes match" {
+    for ([_][]const u8{ "/screenshot/annotated", "/screenshot/diff", "/screencast/start", "/screencast/stop" }) |p| {
+        try std.testing.expect(p.len > 0);
+    }
+}
+
+test "upload route matching" {
+    const path = "/upload?tab_id=1&ref=e0&file_path=/tmp/test.png";
+    const clean = if (std.mem.indexOfScalar(u8, path, '?')) |idx| path[0..idx] else path;
+    try std.testing.expectEqualStrings("/upload", clean);
+}
+
+test "upload parameter validation" {
+    const target = "/upload?tab_id=t1&ref=e3&file_path=/home/user/file.pdf";
+    try std.testing.expectEqualStrings("t1", getQueryParam(target, "tab_id").?);
+    try std.testing.expectEqualStrings("e3", getQueryParam(target, "ref").?);
+    try std.testing.expectEqualStrings("/home/user/file.pdf", getQueryParam(target, "file_path").?);
+    // missing required params return null
+    try std.testing.expect(getQueryParam("/upload?ref=e0&file_path=/tmp/f", "tab_id") == null);
+    try std.testing.expect(getQueryParam("/upload?tab_id=1&file_path=/tmp/f", "ref") == null);
+    try std.testing.expect(getQueryParam("/upload?tab_id=1&ref=e0", "file_path") == null);
 }

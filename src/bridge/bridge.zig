@@ -185,6 +185,67 @@ pub const Bridge = struct {
         return self.cdp_clients.getPtr(tab_id);
     }
 
+    pub fn exportState(self: *Bridge, allocator: std.mem.Allocator) ![]const u8 {
+        self.mu.lockShared();
+        defer self.mu.unlockShared();
+
+        var json_buf: std.ArrayList(u8) = .empty;
+        const writer = json_buf.writer(allocator);
+        try writer.writeAll("[");
+        var it = self.tabs.valueIterator();
+        var first = true;
+        while (it.next()) |tab| {
+            if (!first) try writer.writeAll(",");
+            first = false;
+            try writer.print("{{\"id\":\"{s}\",\"url\":\"{s}\",\"title\":\"{s}\",\"ws_url\":\"{s}\"}}", .{ tab.id, tab.url, tab.title, tab.ws_url });
+        }
+        try writer.writeAll("]");
+        return json_buf.toOwnedSlice(allocator);
+    }
+
+    pub fn importState(self: *Bridge, json: []const u8, allocator: std.mem.Allocator) !usize {
+        _ = allocator;
+        var count: usize = 0;
+        var pos: usize = 0;
+
+        while (pos < json.len) {
+            const obj_start = std.mem.indexOfScalarPos(u8, json, pos, '{') orelse break;
+            const obj_end = std.mem.indexOfScalarPos(u8, json, obj_start, '}') orelse break;
+            const obj = json[obj_start .. obj_end + 1];
+
+            const id = extractField(obj, "\"id\"") orelse {
+                pos = obj_end + 1;
+                continue;
+            };
+            const url = extractField(obj, "\"url\"") orelse "";
+            const title = extractField(obj, "\"title\"") orelse "";
+            const ws_url = extractField(obj, "\"ws_url\"") orelse "";
+
+            try self.putTab(.{
+                .id = id,
+                .url = url,
+                .title = title,
+                .ws_url = ws_url,
+                .created_at = std.time.timestamp(),
+                .last_accessed = std.time.timestamp(),
+            });
+            count += 1;
+            pos = obj_end + 1;
+        }
+        return count;
+    }
+
+    fn extractField(json: []const u8, field: []const u8) ?[]const u8 {
+        const field_pos = std.mem.indexOf(u8, json, field) orelse return null;
+        const colon = std.mem.indexOfScalarPos(u8, json, field_pos + field.len, ':') orelse return null;
+        var i = colon + 1;
+        while (i < json.len and (json[i] == ' ' or json[i] == '"')) : (i += 1) {}
+        if (i == 0) return null;
+        const val_start = i;
+        const val_end = std.mem.indexOfScalarPos(u8, json, val_start, '"') orelse return null;
+        return json[val_start..val_end];
+    }
+
     /// Get or create a HAR recorder for a tab.
     pub fn getHarRecorder(self: *Bridge, tab_id: []const u8) ?*HarRecorder {
         self.mu.lock();
@@ -204,6 +265,43 @@ test "bridge init/deinit" {
     var bridge = Bridge.init(std.testing.allocator);
     defer bridge.deinit();
     try std.testing.expectEqual(@as(usize, 0), bridge.tabCount());
+}
+
+test "exportState empty bridge" {
+    var bridge = Bridge.init(std.testing.allocator);
+    defer bridge.deinit();
+    const json = try bridge.exportState(std.testing.allocator);
+    defer std.testing.allocator.free(json);
+    try std.testing.expectEqualStrings("[]", json);
+}
+
+test "exportState with one tab" {
+    var bridge = Bridge.init(std.testing.allocator);
+    defer bridge.deinit();
+    try bridge.putTab(.{
+        .id = "t1",
+        .url = "https://example.com",
+        .title = "Example",
+        .ws_url = "ws://localhost:9222/t1",
+        .created_at = 1000,
+        .last_accessed = 1000,
+    });
+    const json = try bridge.exportState(std.testing.allocator);
+    defer std.testing.allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "https://example.com") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"id\":\"t1\"") != null);
+}
+
+test "importState round-trip" {
+    var bridge = Bridge.init(std.testing.allocator);
+    defer bridge.deinit();
+    const input = "[{\"id\":\"a1\",\"url\":\"https://a.com\",\"title\":\"A\",\"ws_url\":\"ws://x\"},{\"id\":\"b2\",\"url\":\"https://b.com\",\"title\":\"B\",\"ws_url\":\"\"}]";
+    const count = try bridge.importState(input, std.testing.allocator);
+    try std.testing.expectEqual(@as(usize, 2), count);
+    try std.testing.expectEqual(@as(usize, 2), bridge.tabCount());
+    const tab = bridge.getTab("a1");
+    try std.testing.expect(tab != null);
+    try std.testing.expectEqualStrings("https://a.com", tab.?.url);
 }
 
 test "bridge tab CRUD" {

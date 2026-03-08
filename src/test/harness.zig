@@ -106,7 +106,7 @@ pub const TestHarness = struct {
         defer self.allocator.free(action_result);
 
         // Wait for page to settle
-        std.time.sleep(500 * std.time.ns_per_ms);
+        std.Thread.sleep(500 * std.time.ns_per_ms);
 
         // After snapshot
         const after = try self.get(snap_path);

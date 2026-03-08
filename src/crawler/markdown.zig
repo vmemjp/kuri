@@ -125,6 +125,40 @@ fn extractAttr(tag: []const u8, name: []const u8) ?[]const u8 {
     return null;
 }
 
+pub fn countTagsSimd(html: []const u8) usize {
+    const Vec = @Vector(16, u8);
+    const needle: Vec = @splat(@as(u8, '<'));
+    var count: usize = 0;
+    var i: usize = 0;
+
+    while (i + 16 <= html.len) : (i += 16) {
+        const chunk: Vec = html[i..][0..16].*;
+        const matches = chunk == needle;
+        const mask: @Vector(16, u1) = @bitCast(matches);
+        const bits: u16 = @bitCast(mask);
+        count += @popCount(bits);
+    }
+
+    // Scalar tail
+    while (i < html.len) : (i += 1) {
+        if (html[i] == '<') count += 1;
+    }
+
+    return count;
+}
+
+test "countTagsSimd with tags" {
+    try std.testing.expectEqual(@as(usize, 2), countTagsSimd("<p>hello</p>"));
+}
+
+test "countTagsSimd empty string" {
+    try std.testing.expectEqual(@as(usize, 0), countTagsSimd(""));
+}
+
+test "countTagsSimd no tags" {
+    try std.testing.expectEqual(@as(usize, 0), countTagsSimd("hello world"));
+}
+
 test "basic HTML to Markdown" {
     const html = "<h1>Hello</h1><p>World</p>";
     const md = try htmlToMarkdown(html, std.testing.allocator);

@@ -12,6 +12,7 @@ pub const Launcher = struct {
     ws_url_len: usize,
     restarts: u8,
     mode: Mode,
+    extensions: ?[]const u8,
 
     pub const Mode = enum {
         managed, // we launched Chrome ourselves
@@ -50,6 +51,7 @@ pub const Launcher = struct {
             .ws_url_len = 0,
             .restarts = 0,
             .mode = mode,
+            .extensions = cfg.extensions,
         };
     }
 
@@ -92,16 +94,31 @@ pub const Launcher = struct {
         ) catch unreachable;
         const port_flag_len = port_flag.len;
 
-        // Build argv — we need stable pointers so use the buf we have
-        const argv = [_][]const u8{
-            chrome_bin,
-            "--headless=new",
-            "--disable-gpu",
-            "--no-sandbox",
-            self.ws_url_buf[0..port_flag_len],
+        // Build argv with optional extension flags
+        var argv_list: std.ArrayList([]const u8) = .empty;
+        defer argv_list.deinit(self.allocator);
+
+        try argv_list.append(self.allocator, chrome_bin);
+        try argv_list.append(self.allocator, "--headless=new");
+        try argv_list.append(self.allocator, "--disable-gpu");
+        try argv_list.append(self.allocator, "--no-sandbox");
+        try argv_list.append(self.allocator, self.ws_url_buf[0..port_flag_len]);
+
+        // Build and append extension flags if configured
+        const ext_flags: ?[][]u8 = if (self.extensions) |ext_str|
+            try buildExtensionFlags(self.allocator, ext_str)
+        else
+            null;
+        defer if (ext_flags) |flags| {
+            for (flags) |f| self.allocator.free(f);
+            self.allocator.free(flags);
         };
 
-        var child = std.process.Child.init(&argv, self.allocator);
+        if (ext_flags) |flags| {
+            for (flags) |f| try argv_list.append(self.allocator, f);
+        }
+
+        var child = std.process.Child.init(argv_list.items, self.allocator);
         child.stderr_behavior = .Ignore;
         child.stdout_behavior = .Ignore;
 
@@ -171,6 +188,48 @@ pub const Launcher = struct {
         return null;
     }
 };
+
+// ── Extension utilities ─────────────────────────────────────────────────
+
+/// Parse a comma-separated extensions string and return the Chrome flags needed
+/// to load them: one `--load-extension=<path>` per entry plus one
+/// `--disable-extensions-except=<path1>,<path2>,...` covering all paths.
+///
+/// The caller owns the returned slice and every string in it — free each item
+/// then free the slice itself (or use an arena).
+pub fn buildExtensionFlags(allocator: std.mem.Allocator, extensions: []const u8) ![][]u8 {
+    var flags: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (flags.items) |f| allocator.free(f);
+        flags.deinit(allocator);
+    }
+
+    var paths: std.ArrayList([]const u8) = .empty;
+    defer paths.deinit(allocator);
+
+    var it = std.mem.splitScalar(u8, extensions, ',');
+    while (it.next()) |raw| {
+        const path = std.mem.trim(u8, raw, " \t");
+        if (path.len == 0) continue;
+        try paths.append(allocator, path);
+
+        const load_flag = try std.fmt.allocPrint(allocator, "--load-extension={s}", .{path});
+        try flags.append(allocator, load_flag);
+    }
+
+    if (paths.items.len > 0) {
+        const joined = try std.mem.join(allocator, ",", paths.items);
+        defer allocator.free(joined);
+        const except_flag = try std.fmt.allocPrint(
+            allocator,
+            "--disable-extensions-except={s}",
+            .{joined},
+        );
+        try flags.append(allocator, except_flag);
+    }
+
+    return flags.toOwnedSlice(allocator);
+}
 
 // ── Port utilities ──────────────────────────────────────────────────────
 
@@ -287,9 +346,11 @@ test "Launcher init managed mode" {
         .stale_tab_interval_s = 30,
         .request_timeout_ms = 30_000,
         .navigate_timeout_ms = 30_000,
+        .extensions = null,
     };
     const launcher = Launcher.init(std.testing.allocator, cfg);
     try std.testing.expectEqual(Launcher.Mode.managed, launcher.mode);
+    try std.testing.expectEqual(@as(?[]const u8, null), launcher.extensions);
 }
 
 test "Launcher init external mode" {
@@ -302,9 +363,27 @@ test "Launcher init external mode" {
         .stale_tab_interval_s = 30,
         .request_timeout_ms = 30_000,
         .navigate_timeout_ms = 30_000,
+        .extensions = null,
     };
     const launcher = Launcher.init(std.testing.allocator, cfg);
     try std.testing.expectEqual(Launcher.Mode.external, launcher.mode);
+}
+
+test "Launcher init with extensions" {
+    const cfg = config.Config{
+        .host = "127.0.0.1",
+        .port = 8080,
+        .cdp_url = null,
+        .auth_secret = null,
+        .state_dir = ".browdie",
+        .stale_tab_interval_s = 30,
+        .request_timeout_ms = 30_000,
+        .navigate_timeout_ms = 30_000,
+        .extensions = "/path/to/ext1,/path/to/ext2",
+    };
+    const launcher = Launcher.init(std.testing.allocator, cfg);
+    try std.testing.expectEqual(Launcher.Mode.managed, launcher.mode);
+    try std.testing.expectEqualStrings("/path/to/ext1,/path/to/ext2", launcher.extensions.?);
 }
 
 test "healthCheck returns not alive for unbound port" {
@@ -316,8 +395,72 @@ test "healthCheck returns not alive for unbound port" {
         .ws_url_len = 0,
         .restarts = 0,
         .mode = .managed,
+        .extensions = null,
     };
     const status = launcher.healthCheck();
     try std.testing.expect(!status.alive);
     try std.testing.expect(status.ws_url == null);
+}
+
+test "buildExtensionFlags single extension" {
+    const alloc = std.testing.allocator;
+    const flags = try buildExtensionFlags(alloc, "/path/to/ext");
+    defer {
+        for (flags) |f| alloc.free(f);
+        alloc.free(flags);
+    }
+    try std.testing.expectEqual(@as(usize, 2), flags.len);
+    try std.testing.expectEqualStrings("--load-extension=/path/to/ext", flags[0]);
+    try std.testing.expectEqualStrings("--disable-extensions-except=/path/to/ext", flags[1]);
+}
+
+test "buildExtensionFlags multiple extensions" {
+    const alloc = std.testing.allocator;
+    const flags = try buildExtensionFlags(alloc, "/ext/a,/ext/b,/ext/c");
+    defer {
+        for (flags) |f| alloc.free(f);
+        alloc.free(flags);
+    }
+    // 3 --load-extension flags + 1 --disable-extensions-except flag
+    try std.testing.expectEqual(@as(usize, 4), flags.len);
+    try std.testing.expectEqualStrings("--load-extension=/ext/a", flags[0]);
+    try std.testing.expectEqualStrings("--load-extension=/ext/b", flags[1]);
+    try std.testing.expectEqualStrings("--load-extension=/ext/c", flags[2]);
+    try std.testing.expectEqualStrings("--disable-extensions-except=/ext/a,/ext/b,/ext/c", flags[3]);
+}
+
+test "buildExtensionFlags trims whitespace around paths" {
+    const alloc = std.testing.allocator;
+    const flags = try buildExtensionFlags(alloc, " /ext/a , /ext/b ");
+    defer {
+        for (flags) |f| alloc.free(f);
+        alloc.free(flags);
+    }
+    try std.testing.expectEqual(@as(usize, 3), flags.len);
+    try std.testing.expectEqualStrings("--load-extension=/ext/a", flags[0]);
+    try std.testing.expectEqualStrings("--load-extension=/ext/b", flags[1]);
+    try std.testing.expectEqualStrings("--disable-extensions-except=/ext/a,/ext/b", flags[2]);
+}
+
+test "buildExtensionFlags empty string returns no flags" {
+    const alloc = std.testing.allocator;
+    const flags = try buildExtensionFlags(alloc, "");
+    defer {
+        for (flags) |f| alloc.free(f);
+        alloc.free(flags);
+    }
+    try std.testing.expectEqual(@as(usize, 0), flags.len);
+}
+
+test "buildExtensionFlags skips blank comma-separated entries" {
+    const alloc = std.testing.allocator;
+    const flags = try buildExtensionFlags(alloc, "/ext/a,,/ext/b");
+    defer {
+        for (flags) |f| alloc.free(f);
+        alloc.free(flags);
+    }
+    try std.testing.expectEqual(@as(usize, 3), flags.len);
+    try std.testing.expectEqualStrings("--load-extension=/ext/a", flags[0]);
+    try std.testing.expectEqualStrings("--load-extension=/ext/b", flags[1]);
+    try std.testing.expectEqualStrings("--disable-extensions-except=/ext/a,/ext/b", flags[2]);
 }

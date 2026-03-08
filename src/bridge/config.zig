@@ -9,6 +9,7 @@ pub const Config = struct {
     stale_tab_interval_s: u32,
     request_timeout_ms: u32,
     navigate_timeout_ms: u32,
+    extensions: ?[]const u8,
 };
 
 pub fn load() Config {
@@ -21,6 +22,7 @@ pub fn load() Config {
         .stale_tab_interval_s = parseU32("STALE_TAB_INTERVAL_S") orelse 30,
         .request_timeout_ms = parseU32("REQUEST_TIMEOUT_MS") orelse 30_000,
         .navigate_timeout_ms = parseU32("NAVIGATE_TIMEOUT_MS") orelse 30_000,
+        .extensions = std.posix.getenv("BROWDIE_EXTENSIONS"),
     };
 }
 
@@ -40,4 +42,5 @@ test "load returns defaults" {
     try std.testing.expectEqual(@as(u16, 8080), cfg.port);
     try std.testing.expectEqual(@as(?[]const u8, null), cfg.cdp_url);
     try std.testing.expectEqual(@as(u32, 30), cfg.stale_tab_interval_s);
+    try std.testing.expectEqual(@as(?[]const u8, null), cfg.extensions);
 }

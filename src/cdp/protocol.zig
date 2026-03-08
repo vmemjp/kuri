@@ -62,8 +62,29 @@ pub const Methods = struct {
     pub const dom_get_document = "DOM.getDocument";
     pub const dom_resolve_node = "DOM.resolveNode";
     pub const dom_describe_node = "DOM.describeNode";
+    pub const dom_set_file_input_files = "DOM.setFileInputFiles";
     pub const accessibility_get_full_tree = "Accessibility.getFullAXTree";
     pub const page_capture_screenshot = "Page.captureScreenshot";
+    pub const emulation_set_device_metrics = "Emulation.setDeviceMetricsOverride";
+    pub const emulation_set_user_agent = "Emulation.setUserAgentOverride";
+    pub const emulation_set_geolocation = "Emulation.setGeolocationOverride";
+    pub const dom_highlight_node = "Overlay.highlightNode";
+    pub const dom_hide_highlight = "Overlay.hideHighlight";
+    pub const overlay_highlight_node = "Overlay.highlightNode";
+    pub const overlay_hide_highlight = "Overlay.hideHighlight";
+    pub const page_start_screencast = "Page.startScreencast";
+    pub const page_stop_screencast = "Page.stopScreencast";
+    pub const page_screencast_frame_ack = "Page.screencastFrameAck";
+
+    // Runtime domain
+    pub const runtime_console_api_called = "Runtime.consoleAPICalled";
+    pub const runtime_enable = "Runtime.enable";
+
+    // Fetch domain (network interception)
+    pub const fetch_enable = "Fetch.enable";
+    pub const fetch_disable = "Fetch.disable";
+    pub const fetch_continue_request = "Fetch.continueRequest";
+    pub const fetch_fulfill_request = "Fetch.fulfillRequest";
 };
 
 test "methods are valid strings" {

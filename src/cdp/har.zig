@@ -15,6 +15,13 @@ pub const HarRecorder = struct {
     allocator: std.mem.Allocator,
     entries: std.ArrayList(HarEntry),
     recording: bool,
+    pending_requests: std.StringHashMap(PendingRequest),
+
+    pub const PendingRequest = struct {
+        url: []const u8,
+        method: []const u8,
+        timestamp: i64,
+    };
 
     pub const HarEntry = struct {
         url: []const u8,
@@ -33,6 +40,7 @@ pub const HarRecorder = struct {
             .allocator = allocator,
             .entries = .empty,
             .recording = false,
+            .pending_requests = std.StringHashMap(PendingRequest).init(allocator),
         };
     }
 
@@ -135,6 +143,71 @@ pub const HarRecorder = struct {
         return self.recording;
     }
 
+    /// Handle a raw CDP event JSON string.
+    /// Looks for Network.requestWillBeSent and Network.responseReceived events.
+    pub fn handleCdpEvent(self: *HarRecorder, event_json: []const u8) void {
+        if (!self.recording) return;
+
+        if (std.mem.indexOf(u8, event_json, "\"Network.requestWillBeSent\"") != null) {
+            const request_id = extractField(event_json, "requestId") orelse return;
+            const url = extractField(event_json, "url") orelse return;
+            const method = extractField(event_json, "method") orelse "GET";
+
+            const owned_id = self.allocator.dupe(u8, request_id) catch return;
+            const owned_url = self.allocator.dupe(u8, url) catch {
+                self.allocator.free(owned_id);
+                return;
+            };
+            const owned_method = self.allocator.dupe(u8, method) catch {
+                self.allocator.free(owned_id);
+                self.allocator.free(owned_url);
+                return;
+            };
+            const pending = PendingRequest{
+                .url = owned_url,
+                .method = owned_method,
+                .timestamp = std.time.timestamp(),
+            };
+            self.pending_requests.put(owned_id, pending) catch {
+                self.allocator.free(owned_id);
+                self.allocator.free(owned_url);
+                self.allocator.free(owned_method);
+            };
+        } else if (std.mem.indexOf(u8, event_json, "\"Network.responseReceived\"") != null) {
+            const request_id = extractField(event_json, "requestId") orelse return;
+            const pending = self.pending_requests.get(request_id) orelse return;
+
+            self.addEntry(.{
+                .url = pending.url,
+                .method = pending.method,
+                .status = 200,
+                .status_text = "OK",
+                .mime_type = "application/octet-stream",
+                .timestamp = pending.timestamp,
+                .duration_ms = 0,
+                .request_size = 0,
+                .response_size = 0,
+            }) catch return;
+        }
+    }
+
+    /// Extract a simple string field value from JSON: finds "field":"value" pattern.
+    fn extractField(json: []const u8, field: []const u8) ?[]const u8 {
+        var search_buf: [256]u8 = undefined;
+        const prefix = std.fmt.bufPrint(&search_buf, "\"{s}\"", .{field}) catch return null;
+
+        const field_pos = std.mem.indexOf(u8, json, prefix) orelse return null;
+        const after_field = field_pos + prefix.len;
+
+        // Skip colon and whitespace
+        var i = after_field;
+        while (i < json.len and (json[i] == ':' or json[i] == ' ' or json[i] == '\t')) : (i += 1) {}
+        if (i >= json.len or json[i] != '"') return null;
+        const val_start = i + 1;
+        const val_end = std.mem.indexOfScalarPos(u8, json, val_start, '"') orelse return null;
+        return json[val_start..val_end];
+    }
+
     pub fn deinit(self: *HarRecorder) void {
         for (self.entries.items) |entry| {
             self.allocator.free(entry.url);
@@ -143,6 +216,14 @@ pub const HarRecorder = struct {
             self.allocator.free(entry.mime_type);
         }
         self.entries.deinit(self.allocator);
+
+        var it = self.pending_requests.iterator();
+        while (it.next()) |kv| {
+            self.allocator.free(kv.key_ptr.*);
+            self.allocator.free(kv.value_ptr.url);
+            self.allocator.free(kv.value_ptr.method);
+        }
+        self.pending_requests.deinit();
     }
 };
 
@@ -217,4 +298,38 @@ test "HarRecorder toJson empty" {
     defer std.testing.allocator.free(json);
 
     try std.testing.expectEqualStrings("{\"log\":{\"version\":\"1.2\",\"creator\":{\"name\":\"browdie\",\"version\":\"0.1.0\"},\"entries\":[]}}", json);
+}
+
+test "HarRecorder handleCdpEvent processes request and response" {
+    var rec = HarRecorder.init(std.testing.allocator);
+    defer rec.deinit();
+
+    // Not recording — should be ignored
+    rec.handleCdpEvent("{\"method\":\"Network.requestWillBeSent\",\"params\":{\"requestId\":\"1\",\"url\":\"https://example.com\",\"method\":\"GET\"}}");
+    try std.testing.expectEqual(@as(usize, 0), rec.entryCount());
+
+    // Start recording
+    rec.recording = true;
+
+    // Send requestWillBeSent
+    rec.handleCdpEvent("{\"method\":\"Network.requestWillBeSent\",\"params\":{\"requestId\":\"req1\",\"url\":\"https://example.com/page\",\"method\":\"GET\"}}");
+    try std.testing.expectEqual(@as(usize, 0), rec.entryCount());
+
+    // Send responseReceived for the same requestId
+    rec.handleCdpEvent("{\"method\":\"Network.responseReceived\",\"params\":{\"requestId\":\"req1\",\"response\":{\"status\":200}}}");
+    try std.testing.expectEqual(@as(usize, 1), rec.entryCount());
+}
+
+test "HarRecorder extractField helper" {
+    const json = "{\"method\":\"Network.requestWillBeSent\",\"requestId\":\"abc123\",\"url\":\"https://test.com\"}";
+    const rid = HarRecorder.extractField(json, "requestId");
+    try std.testing.expect(rid != null);
+    try std.testing.expectEqualStrings("abc123", rid.?);
+
+    const url = HarRecorder.extractField(json, "url");
+    try std.testing.expect(url != null);
+    try std.testing.expectEqualStrings("https://test.com", url.?);
+
+    const missing = HarRecorder.extractField(json, "nonexistent");
+    try std.testing.expect(missing == null);
 }
