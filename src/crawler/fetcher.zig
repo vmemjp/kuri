@@ -31,7 +31,7 @@ pub fn retryDelayMs(attempt: u8) u64 {
 
 /// Fetch a page via CDP: validate URL, check rate limiter, navigate, extract HTML.
 /// Retries up to opts.max_retries times with exponential backoff (100ms * 2^attempt).
-/// If initial HTML is < 5KB, waits 500ms and re-extracts for dynamic content.
+/// If initial HTML is < 5KB, waits for Page.loadEventFired then re-extracts.
 pub fn fetchPage(
     client: *CdpClient,
     url: []const u8,
@@ -64,10 +64,11 @@ pub fn fetchPage(
         const result = client.send(arena, "Runtime.evaluate", eval_params) catch continue;
         const html = extractHtmlValue(result, arena) catch continue;
 
-        // Dynamic content wait: if < 5KB, sleep 500ms and re-extract
+        // Dynamic content wait: poll for Page.loadEventFired instead of blind sleep
         var final_html = html;
         if (html.len < 5 * 1024) {
-            std.Thread.sleep(500 * std.time.ns_per_ms);
+            // Wait for page load event (up to ~10 WS reads, typically <100ms)
+            _ = client.waitForEvent(arena, "Page.loadEventFired", 10);
             if (client.send(arena, "Runtime.evaluate", eval_params)) |result2| {
                 final_html = extractHtmlValue(result2, arena) catch html;
             } else |_| {}
@@ -142,7 +143,7 @@ pub fn retryDelayNs(attempt: u8) u64 {
 
 /// Generic page fetcher that works with any CDP-like client (including test mocks).
 /// Uses `anytype` for client so pure-function tests don't need a real CdpClient.
-pub fn fetchPageGeneric(client: anytype, url: []const u8, opts: FetchOpts, rate_limiter: ?*RateLimiter, arena: std.mem.Allocator) FetchError!FetchResult {
+pub fn fetchPageGeneric(client: anytype, url: []const u8, _: FetchOpts, rate_limiter: ?*RateLimiter, arena: std.mem.Allocator) FetchError!FetchResult {
     // Validate URL
     validator.validateUrl(url) catch return FetchError.ValidationFailed;
 
@@ -155,9 +156,8 @@ pub fn fetchPageGeneric(client: anytype, url: []const u8, opts: FetchOpts, rate_
     const nav_params = std.fmt.allocPrint(arena, "{{\"url\":\"{s}\"}}", .{url}) catch return FetchError.FetchFailed;
     _ = client.send(arena, "Page.navigate", nav_params) catch return FetchError.FetchFailed;
 
-    // Brief wait for page load
-    const wait_ns: u64 = @as(u64, opts.timeout_ms / 10) * std.time.ns_per_ms;
-    std.Thread.sleep(wait_ns);
+    // Brief wait for page load (50ms baseline — CDP navigate is async)
+    std.Thread.sleep(50 * std.time.ns_per_ms);
 
     // Extract HTML via Runtime.evaluate
     const eval_params = "{\"expression\":\"document.documentElement.outerHTML\",\"returnByValue\":true}";

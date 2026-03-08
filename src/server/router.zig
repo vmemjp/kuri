@@ -64,6 +64,9 @@ fn handleConnection(gpa: std.mem.Allocator, bridge: *Bridge, cfg: Config, conn: 
         route(&request, arena, bridge, cfg);
 
         if (!request.head.keep_alive) return;
+
+        // Free per-request allocations while keeping arena pages for reuse
+        _ = arena_impl.reset(.retain_capacity);
     }
 }
 
