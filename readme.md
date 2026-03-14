@@ -1,10 +1,16 @@
-[![Release](https://img.shields.io/github/v/release/justrach/agentic-browdie?style=flat-square)](https://github.com/justrach/agentic-browdie/releases/latest)
-[![License](https://img.shields.io/github/license/justrach/agentic-browdie?style=flat-square)](https://github.com/justrach/agentic-browdie/blob/main/LICENSE)
-![Zig](https://img.shields.io/badge/zig-0.15.2-f7a41d?style=flat-square)
-![node_modules](https://img.shields.io/badge/node__modules-0_files-brightgreen?style=flat-square)
-![status](https://img.shields.io/badge/status-experimental-orange?style=flat-square)
+<p align="center">
+  <img src="kuri.png" alt="Kuri" width="200" />
+</p>
 
-# Kuri 🌰
+<h1 align="center">Kuri 🌰</h1>
+
+<p align="center">
+  <a href="https://github.com/justrach/kuri/releases/latest"><img src="https://img.shields.io/github/v/release/justrach/kuri?style=flat-square" alt="Release"></a>
+  <a href="https://github.com/justrach/kuri/blob/main/LICENSE"><img src="https://img.shields.io/github/license/justrach/kuri?style=flat-square" alt="License"></a>
+  <img src="https://img.shields.io/badge/zig-0.15.2-f7a41d?style=flat-square" alt="Zig">
+  <img src="https://img.shields.io/badge/node__modules-0_files-brightgreen?style=flat-square" alt="node_modules">
+  <img src="https://img.shields.io/badge/status-experimental-orange?style=flat-square" alt="status">
+</p>
 
 **Browser automation & web crawling for AI agents. Written in Zig. Zero Node.js.**
 
