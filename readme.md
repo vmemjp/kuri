@@ -71,14 +71,33 @@ curl -s "http://localhost:8080/snapshot?tab_id=ABC123&filter=interactive"
 
 ---
 
-## 📊 vs Alternatives
+## 📊 Benchmarks
+
+Measured on Apple M3 Pro, macOS 15.3. `kuri` built with `-Doptimize=ReleaseFast`. `agent-browser` v0.20.0 (Rust native binary).
+
+### vs agent-browser (Rust)
+
+```
+                        agent-browser        kuri             delta
+                        (Rust, v0.20)        (Zig, v0.2)
+─────────────────────────────────────────────────────────────────────
+Binary size             6.0 MB               464 KB           13× smaller
+Cold start              3.4 ms               3.0 ms           ~same
+Install size            33 MB (npm)          3.3 MB (3 bins)  10× smaller
+node_modules            34 files             0 files          ∞× less
+Standalone fetcher      ❌                    ✅ kuri-fetch
+Terminal browser        ❌                    ✅ kuri-browse
+JS engine (no Chrome)   ❌                    ✅ QuickJS
+```
+
+### vs Playwright / Lightpanda
 
 |  | **Kuri** | **Playwright** | **Lightpanda** |
 |---|---|---|---|
 | Runtime | None (native binary) | Node.js ≥ 18 | None (Zig) |
 | `node_modules` | **0 files** | ~300 MB | **0 files** |
-| Binary size | **~2–5 MB** | N/A (interpreted) | ~15 MB |
-| Cold start | **< 5 ms** | ~1–3 s | < 5 ms |
+| Binary size | **464 KB** server | N/A (interpreted) | ~15 MB |
+| Cold start | **~3 ms** | ~1–3 s | < 5 ms |
 | Standalone fetcher | ✅ `kuri-fetch` | ❌ | ❌ |
 | Terminal browser | ✅ `kuri-browse` | ❌ | ❌ |
 | JS execution (no Chrome) | ✅ QuickJS | ❌ | ❌ |
@@ -402,11 +421,13 @@ See [CONTRIBUTORS.md](CONTRIBUTORS.md) for guidelines.
 
 ## Credits
 
-**[Pinchtab](https://github.com/pinchtab/pinchtab)** — Browser control for AI agents (Go)
-**[Pathik](https://github.com/justrach/pathik)** — High-performance web crawler (Go)
-**[agent-browser](https://github.com/vercel-labs/agent-browser)** — Vercel's agent-first browser automation — `@eN` ref system, snapshot diffing, HAR recording
-**[QuickJS-ng](https://github.com/nicklausw/quickjs-ng)** via **[mitchellh/zig-quickjs-ng](https://github.com/nicklausw/quickjs-ng)** — JS engine for standalone fetcher
-**Zig 0.15.2** — the whole stack
+| Project | What we borrowed |
+|---------|-----------------|
+| [agent-browser](https://github.com/vercel-labs/agent-browser) | `@eN` ref system, snapshot diffing, HAR recording patterns |
+| [Pinchtab](https://github.com/pinchtab/pinchtab) | Browser control architecture for AI agents |
+| [Pathik](https://github.com/justrach/pathik) | High-performance crawling patterns |
+| [QuickJS-ng](https://github.com/nicklausw/quickjs-ng) via [mitchellh/zig-quickjs-ng](https://github.com/mitchellh/zig-quickjs-ng) | JS engine for `kuri-fetch` |
+| [Zig 0.15.2](https://ziglang.org) | The whole stack |
 
 ## License
 
