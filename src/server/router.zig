@@ -1993,7 +1993,7 @@ fn handleScriptInject(request: *std.http.Server.Request, arena: std.mem.Allocato
         if (readRequestBody(request, arena)) |body| {
             if (body.len > 0) {
                 // Try to extract "source" field from JSON body
-                if (extractSimpleJsonString(body, "source", 0)) |s| {
+                if (extractSimpleJsonString(body, 0, "\"source\"")) |s| {
                     break :blk s;
                 }
                 // If not JSON, treat entire body as raw script source
