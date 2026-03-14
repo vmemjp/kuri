@@ -52,6 +52,36 @@ pub fn build(b: *std.Build) void {
     const merjs_e2e_step = b.step("merjs-e2e", "Run merjs E2E tests (requires merjs + browdie + Chrome live)");
     merjs_e2e_step.dependOn(&run_merjs_e2e.step);
 
+    // browdie-fetch standalone CLI (no Chrome dependency)
+    const fetch_exe = b.addExecutable(.{
+        .name = "browdie-fetch",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/fetch_main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    b.installArtifact(fetch_exe);
+    const run_fetch = b.addRunArtifact(fetch_exe);
+    run_fetch.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_fetch.addArgs(args);
+    }
+    const fetch_step = b.step("fetch", "Run browdie-fetch standalone CLI");
+    fetch_step.dependOn(&run_fetch.step);
+
+    // browdie-fetch tests
+    const fetch_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/fetch_main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    const run_fetch_tests = b.addRunArtifact(fetch_tests);
+    const fetch_test_step = b.step("test-fetch", "Run browdie-fetch unit tests");
+    fetch_test_step.dependOn(&run_fetch_tests.step);
+
     // Benchmarks
     const bench = b.addExecutable(.{
         .name = "browdie-bench",
