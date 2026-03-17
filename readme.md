@@ -158,15 +158,17 @@ Same Chrome session, measured with `tiktoken` `cl100k_base`.
 | `kuri snap --text` | 70,517 | 26,583 | 9.4x | Text-heavy dump |
 | `agent-browser snapshot` | 15,880 | 4,591 | 1.6x | More verbose on same page |
 | `agent-browser snapshot -i` | 7,226 | 2,499 | 0.9x | Close, still larger |
-| `lightpanda semantic_tree` | 68,084 | 26,433 | 9.3x | Raw DOM JSON, no useful compression |
-| `lightpanda semantic_tree_text` | 1,909 | 507 | 0.2x | JS-heavy SPA did not render flight data |
+| `lightpanda semantic_tree` | 68,084 | 26,433 | 9.3x | Raw DOM JSON — no useful compression |
+| `lightpanda semantic_tree_text` | 1,909 | 507 | 0.2x | ⚠ Google Flights did not render — 507 tokens of nav chrome, zero flight data |
+
+> **Why lightpanda scores so low here:** Lightpanda is a headless browser without a full V8/Blink JS engine. Google Flights is a JS-heavy SPA that fetches flight data at runtime via `fetch()` and renders it entirely client-side. Lightpanda fetched the HTML shell and executed what it could, but the SPA never populated — so `semantic_tree_text` returned 507 tokens of navigation links with no prices, no airlines, no results. The 507-token number is not efficiency; it is a failed render. kuri and agent-browser both connect to a real Chrome tab where the page has fully loaded.
 
 **What this shows**
 
 - On the same live page, `kuri` default was **38% leaner** than `agent-browser` (`2,841` vs `4,591` tokens).
-- `kuri --interactive` stayed useful while dropping to **1,888 tokens**, a **25% reduction** vs `agent-browser snapshot -i`.
-- Lightpanda's smallest output looked efficient only because Google Flights did not render there; the page data was missing.
-- The new compact default matters: the previous JSON-shaped default was **17.3x** more expensive than the current one.
+- `kuri --interactive` stayed useful at **1,888 tokens** — **25% fewer** than `agent-browser snapshot -i`.
+- Lightpanda's tiny output is a failure mode on JS-heavy SPAs, not a win — the page data was missing entirely.
+- kuri's old JSON default was **17.3x more expensive** than the new compact default; the upgrade matters.
 
 ### vs Playwright / Lightpanda
 
