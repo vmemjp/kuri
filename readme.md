@@ -14,22 +14,25 @@
 
 **Browser automation & web crawling for AI agents. Written in Zig. Zero Node.js.**
 
-CDP automation · A11y snapshots · HAR recording · Standalone fetcher · Interactive terminal browser · QuickJS scripting
+CDP automation · A11y snapshots · HAR recording · Standalone fetcher · Interactive terminal browser · Agentic CLI · Security testing
 
-[Quick Start](#-quick-start) · [API](#-http-api) · [kuri-fetch](#-kuri-fetch) · [kuri-browse](#-kuri-browse) · [Architecture](#-architecture) · [Configuration](#-configuration)
+[Quick Start](#-quick-start) · [API](#-http-api) · [kuri-agent](#-kuri-agent) · [kuri-fetch](#-kuri-fetch) · [kuri-browse](#-kuri-browse) · [Security Testing](#-security-testing) · [Architecture](#-architecture) · [Configuration](#-configuration)
+
 
 ---
 
 ## The Problem
 
 Every browser automation tool drags in Playwright (~300 MB), a Node.js runtime, and a cascade of npm dependencies. Your AI agent just wants to read a page, click a button, and move on.
-
-**Kuri is a single Zig binary.** Three modes, zero runtime:
+**Kuri is a single Zig binary.** Four modes, zero runtime:
 
 ```
 kuri           →  CDP server (Chrome automation, a11y snapshots, HAR)
 kuri-fetch     →  standalone fetcher (no Chrome, QuickJS for JS, ~2 MB)
 kuri-browse    →  interactive terminal browser (navigate, follow links, search)
+kuri-agent     →  agentic CLI (scriptable Chrome automation + security testing)
+```
+
 ```
 
 ---
@@ -327,6 +330,118 @@ Learn more [1]
 - **Smart filtering** — skips `javascript:` and `mailto:` hrefs
 
 ---
+
+## 🤖 kuri-agent
+
+Scriptable CLI for Chrome automation — drives the browser command-by-command from your terminal or shell scripts. Shares session state across invocations via `~/.kuri/session.json`.
+
+```bash
+zig build agent   # build kuri-agent
+
+# 1. Find a Chrome tab
+kuri-agent tabs
+# → ws://127.0.0.1:9222/devtools/page/ABC123  https://example.com
+
+# 2. Attach to it
+kuri-agent use ws://127.0.0.1:9222/devtools/page/ABC123
+
+# 3. Navigate + interact
+kuri-agent go https://example.com
+kuri-agent snap --interactive        # → [{"ref":"e0","role":"link","name":"More info"}]
+kuri-agent click e0
+kuri-agent shot                      # saves ~/.kuri/screenshots/<ts>.png
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `tabs [--port N]` | List Chrome tabs |
+| `use <ws_url>` | Attach to a tab (saves session) |
+| `status` | Show current session |
+| `go <url>` | Navigate to URL |
+| `snap [--interactive] [--text] [--depth N]` | A11y snapshot, saves `@eN` refs |
+| `click <ref>` | Click element by ref |
+| `type <ref> <text>` | Type into element |
+| `fill <ref> <text>` | Fill input value |
+| `select <ref> <value>` | Select dropdown option |
+| `eval <js>` | Evaluate JavaScript |
+| `text [selector]` | Get page text |
+| `shot [--out file.png]` | Screenshot |
+| `cookies` | List cookies with security flags |
+| `headers` | Check security response headers |
+| `audit` | Full security audit |
+
+---
+
+## 🔒 Security Testing
+
+`kuri-agent` supports browser-native security trajectories — log in once, then run reconnaissance and header/cookie audits without leaving the terminal.
+
+### Trajectories
+
+**Enumerate → Inspect** — after authenticating, dump auth cookies and check security flags:
+
+```bash
+kuri-agent go https://target.example.com/login
+kuri-agent snap --interactive
+kuri-agent fill e2 myuser
+kuri-agent fill e3 mypassword
+kuri-agent click e4                  # submit login
+
+kuri-agent cookies
+# cookies (3):
+#   session_id  domain=.example.com path=/  [Secure] [HttpOnly] [SameSite=Strict]
+#   csrf_token  domain=.example.com path=/  [Secure] [!HttpOnly]
+#   tracking    domain=.example.com path=/  [!Secure] [!HttpOnly]
+```
+
+**Header audit** — check what security headers the target sends:
+
+```bash
+kuri-agent go https://target.example.com
+kuri-agent headers
+# → {"url":"https://...","status":200,"headers":{
+#     "content-security-policy":"default-src 'self'",
+#     "strict-transport-security":"max-age=31536000",
+#     "x-frame-options":"(missing)",
+#     "x-content-type-options":"nosniff", ...}}
+```
+
+**Full audit** — HTTPS, missing headers, JS-visible cookies in one shot:
+
+```bash
+kuri-agent audit
+# → {"protocol":"https:","url":"https://...","score":6,
+#     "issues":["MISSING:x-frame-options","COOKIES_EXPOSED_TO_JS:2"],
+#     "headers":{"content-security-policy":"default-src 'self'", ...}}
+```
+
+**Cross-account trajectory** — use `eval` to replay API calls with different tokens:
+
+```bash
+# After login, grab the auth token from localStorage
+kuri-agent eval "localStorage.getItem('token')"
+
+# Probe a resource ID with the current session
+kuri-agent eval "fetch('/api/assessments/42').then(r=>r.status)"
+
+# Check for IDOR: does a different user's resource return 200 or 403?
+kuri-agent eval "fetch('/api/assessments/99').then(r=>r.status)"
+```
+
+### Trajectory Report Format
+
+kuri-agent outputs JSON suitable for pipeline integration. Each security command emits a single JSON line — pipe through `jq` for triage:
+
+```bash
+kuri-agent audit | jq '.issues[]'
+kuri-agent cookies | head -20
+kuri-agent headers | jq '.headers | to_entries[] | select(.value == "(missing)") | .key'
+```
+
+---
+
 
 ## 🏗 Architecture
 

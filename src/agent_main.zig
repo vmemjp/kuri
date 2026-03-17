@@ -8,7 +8,7 @@
 ///   tabs [--port N]            list Chrome tabs (default port 9222)
 ///   use <ws_url>               attach to a tab (save to session)
 ///   go <url>                   navigate current tab
-///   snap [--text] [--interactive] [--depth N]  a11y snapshot
+///   snap [--interactive] [--semantic] [--all] [--json] [--text] [--depth N]  a11y snapshot
 ///   click <ref>                click element by @eN ref
 ///   type <ref> <text>          type into element
 ///   fill <ref> <text>          fill input value
@@ -280,6 +280,9 @@ fn cmdNavigate(arena: std.mem.Allocator, client: *CdpClient, url: []const u8) !v
 fn cmdSnap(arena: std.mem.Allocator, client: *CdpClient, session: *Session, flags: []const []const u8) !void {
     const want_text = hasFlag(flags, "--text");
     const want_interactive = hasFlag(flags, "--interactive");
+    const want_json = hasFlag(flags, "--json");
+    const want_semantic = hasFlag(flags, "--semantic");
+    const want_all = hasFlag(flags, "--all");
     const depth = parseDepthFlag(flags);
 
     const raw = client.send(arena, protocol.Methods.accessibility_get_full_tree, null) catch |err| {
@@ -294,6 +297,9 @@ fn cmdSnap(arena: std.mem.Allocator, client: *CdpClient, session: *Session, flag
 
     const opts = a11y.SnapshotOpts{
         .filter_interactive = want_interactive,
+        .filter_semantic = want_semantic,
+        .compact = !want_json and !want_text and !want_all,
+        .json_output = want_json,
         .format_text = want_text,
         .max_depth = depth,
     };
@@ -314,6 +320,8 @@ fn cmdSnap(arena: std.mem.Allocator, client: *CdpClient, session: *Session, flag
     saveSession(arena, session) catch {};
 
     const stdout = std.fs.File.stdout();
+
+    // --text: legacy indented text
     if (want_text) {
         const text = a11y.formatText(snapshot, arena) catch "{}";
         stdout.writeAll(text) catch {};
@@ -321,20 +329,27 @@ fn cmdSnap(arena: std.mem.Allocator, client: *CdpClient, session: *Session, flag
         return;
     }
 
-    // JSON output
-    var buf: std.ArrayList(u8) = .empty;
-    const w = buf.writer(arena);
-    w.writeAll("[") catch {};
-    for (snapshot, 0..) |node, i| {
-        if (i > 0) w.writeAll(",") catch {};
-        w.print("{{\"ref\":\"{s}\",\"role\":\"{s}\",\"name\":\"{s}\"", .{ node.ref, node.role, node.name }) catch {};
-        if (node.value.len > 0) {
-            w.print(",\"value\":\"{s}\"", .{node.value}) catch {};
+    // --json: old JSON array (backward compat)
+    if (want_json) {
+        var buf: std.ArrayList(u8) = .empty;
+        const w = buf.writer(arena);
+        w.writeAll("[") catch {};
+        for (snapshot, 0..) |node, i| {
+            if (i > 0) w.writeAll(",") catch {};
+            w.print("{{\"ref\":\"{s}\",\"role\":\"{s}\",\"name\":\"{s}\"", .{ node.ref, node.role, node.name }) catch {};
+            if (node.value.len > 0) {
+                w.print(",\"value\":\"{s}\"", .{node.value}) catch {};
+            }
+            w.writeAll("}") catch {};
         }
-        w.writeAll("}") catch {};
+        w.writeAll("]\n") catch {};
+        stdout.writeAll(buf.items) catch {};
+        return;
     }
-    w.writeAll("]\n") catch {};
-    stdout.writeAll(buf.items) catch {};
+
+    // Default: compact text-tree (role "name" @ref)
+    const compact = a11y.formatCompact(snapshot, arena) catch "error\n";
+    stdout.writeAll(compact) catch {};
 }
 
 fn cmdAction(arena: std.mem.Allocator, client: *CdpClient, session: *Session, action: []const u8, ref: []const u8, value: ?[]const u8) !void {
@@ -1037,8 +1052,12 @@ fn printUsage() void {
         \\  reload                       reload page
         \\
         \\Page inspection:
-        \\  snap [--text] [--interactive] [--depth N]
-        \\                               a11y snapshot (saves refs for actions)
+        \\  snap [--interactive] [--semantic] [--all] [--json] [--text] [--depth N]
+        \\                               a11y snapshot — compact text-tree by default
+        \\                               --interactive: only interactive elements
+        \\                               --semantic: filter noise roles (headings+interactive)
+        \\                               --all: no filtering, full raw tree
+        \\                               --json: JSON array output (backward compat)
         \\  text [css-selector]          get page text
         \\  eval <js>                    evaluate JavaScript
         \\  shot [--out <file.png>]      take screenshot
