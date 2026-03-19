@@ -356,6 +356,7 @@ test "Launcher init managed mode" {
         .request_timeout_ms = 30_000,
         .navigate_timeout_ms = 30_000,
         .extensions = null,
+        .headless = true,
     };
     const launcher = Launcher.init(std.testing.allocator, cfg);
     try std.testing.expectEqual(Launcher.Mode.managed, launcher.mode);
@@ -373,6 +374,7 @@ test "Launcher init external mode" {
         .request_timeout_ms = 30_000,
         .navigate_timeout_ms = 30_000,
         .extensions = null,
+        .headless = true,
     };
     const launcher = Launcher.init(std.testing.allocator, cfg);
     try std.testing.expectEqual(Launcher.Mode.external, launcher.mode);
@@ -389,6 +391,7 @@ test "Launcher init with extensions" {
         .request_timeout_ms = 30_000,
         .navigate_timeout_ms = 30_000,
         .extensions = "/path/to/ext1,/path/to/ext2",
+        .headless = true,
     };
     const launcher = Launcher.init(std.testing.allocator, cfg);
     try std.testing.expectEqual(Launcher.Mode.managed, launcher.mode);
@@ -405,6 +408,7 @@ test "healthCheck returns not alive for unbound port" {
         .restarts = 0,
         .mode = .managed,
         .extensions = null,
+        .headless = true,
     };
     const status = launcher.healthCheck();
     try std.testing.expect(!status.alive);
