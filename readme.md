@@ -16,7 +16,7 @@
 
 CDP automation · A11y snapshots · HAR recording · Standalone fetcher · Interactive terminal browser · Agentic CLI · Security testing
 
-[Quick Start](#-quick-start) · [API](#-http-api) · [kuri-agent](#-kuri-agent) · [kuri-fetch](#-kuri-fetch) · [kuri-browse](#-kuri-browse) · [Security Testing](#-security-testing) · [Architecture](#-architecture) · [Configuration](#-configuration)
+[Quick Start](#-quick-start) · [Benchmarks](#-benchmarks) · [kuri-agent](#-kuri-agent) · [Security Testing](#-security-testing) · [API](#-http-api) · [Changelog](CHANGELOG.md)
 
 > **Why teams switch to Kuri:** 464 KB binary, ~3 ms cold start. On Google Flights, a full agent loop (go→snap→click→snap→eval) costs **4,110 tokens** vs **4,880** for agent-browser — **16% less per cycle**, compounding across multi-step tasks.
 
