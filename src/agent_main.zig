@@ -1281,18 +1281,38 @@ fn unescapeJson(arena: std.mem.Allocator, s: []const u8) []const u8 {
 }
 
 /// Parse CDP a11y tree response into A11yNode slice.
+/// Single-pass parser — scans the JSON once instead of indexOf per field.
 fn parseA11yNodes(arena: std.mem.Allocator, raw_json: []const u8) ![]const a11y.A11yNode {
     var nodes: std.ArrayList(a11y.A11yNode) = .empty;
 
     const nodes_start = std.mem.indexOf(u8, raw_json, "\"nodes\"") orelse return nodes.toOwnedSlice(arena);
     const array_start = std.mem.indexOfScalarPos(u8, raw_json, nodes_start, '[') orelse return nodes.toOwnedSlice(arena);
 
+    // Single pass: scan for node boundaries and extract fields inline
     var pos = array_start + 1;
     while (pos < raw_json.len) {
-        const node_start = std.mem.indexOfPos(u8, raw_json, pos, "\"nodeId\"") orelse break;
-        const role_val = extractJsonStringField(raw_json, node_start, "\"role\"") orelse "";
-        const name_val = extractNestedValue(raw_json, node_start) orelse "";
-        const backend_id = extractSimpleJsonInt(raw_json, node_start, "\"backendDOMNodeId\"");
+        // Find next node object
+        const obj_start = std.mem.indexOfScalarPos(u8, raw_json, pos, '{') orelse break;
+
+        // Find the end of this node object (match braces)
+        var depth: u32 = 1;
+        var obj_end = obj_start + 1;
+        var in_string = false;
+        while (obj_end < raw_json.len and depth > 0) : (obj_end += 1) {
+            if (raw_json[obj_end] == '\\' and in_string) { obj_end += 1; continue; }
+            if (raw_json[obj_end] == '"') { in_string = !in_string; continue; }
+            if (!in_string) {
+                if (raw_json[obj_end] == '{') depth += 1;
+                if (raw_json[obj_end] == '}') depth -= 1;
+            }
+        }
+
+        const node_json = raw_json[obj_start..obj_end];
+
+        // Extract fields from this node's JSON slice (bounded search)
+        const role_val = extractFieldValue(node_json, "\"role\"") orelse "";
+        const name_val = extractNameValue(node_json) orelse "";
+        const backend_id = extractFieldInt(node_json, "\"backendDOMNodeId\"");
 
         if (role_val.len > 0) {
             try nodes.append(arena, .{
@@ -1305,34 +1325,34 @@ fn parseA11yNodes(arena: std.mem.Allocator, raw_json: []const u8) ![]const a11y.
             });
         }
 
-        const next_node = std.mem.indexOfPos(u8, raw_json, node_start + 10, "\"nodeId\"") orelse raw_json.len;
-        pos = next_node;
+        pos = obj_end;
     }
 
     return nodes.toOwnedSlice(arena);
 }
 
-fn extractJsonStringField(json: []const u8, start: usize, field: []const u8) ?[]const u8 {
-    const field_pos = std.mem.indexOfPos(u8, json, start, field) orelse return null;
-    if (field_pos - start > 2000) return null;
-    const colon = std.mem.indexOfScalarPos(u8, json, field_pos + field.len, ':') orelse return null;
-    const value_field = std.mem.indexOfPos(u8, json, colon, "\"value\"") orelse return null;
-    if (value_field - colon > 100) return null;
-    const val_colon = std.mem.indexOfScalarPos(u8, json, value_field + 7, ':') orelse return null;
-    const quote_start = std.mem.indexOfScalarPos(u8, json, val_colon + 1, '"') orelse return null;
-    const quote_end = std.mem.indexOfScalarPos(u8, json, quote_start + 1, '"') orelse return null;
-    return json[quote_start + 1 .. quote_end];
+/// Extract a string value from a JSON field like "role":{"type":"role","value":"button"}
+fn extractFieldValue(json: []const u8, field: []const u8) ?[]const u8 {
+    const field_pos = std.mem.indexOf(u8, json, field) orelse return null;
+    // Find "value":"..." within the next 150 bytes
+    const search_end = @min(json.len, field_pos + 150);
+    const val_pos = std.mem.indexOf(u8, json[field_pos..search_end], "\"value\"") orelse return null;
+    const abs_val = field_pos + val_pos;
+    const colon = std.mem.indexOfScalarPos(u8, json, abs_val + 7, ':') orelse return null;
+    const q1 = std.mem.indexOfScalarPos(u8, json, colon + 1, '"') orelse return null;
+    const q2 = std.mem.indexOfScalarPos(u8, json, q1 + 1, '"') orelse return null;
+    return json[q1 + 1 .. q2];
 }
 
-fn extractNestedValue(json: []const u8, start: usize) ?[]const u8 {
-    const name_pos = std.mem.indexOfPos(u8, json, start, "\"name\"") orelse return null;
-    if (name_pos - start > 800) return null;
-    return extractJsonStringField(json, name_pos - 1, "\"name\"");
+/// Extract name value — "name":{"type":"...","value":"..."}
+fn extractNameValue(json: []const u8) ?[]const u8 {
+    const name_pos = std.mem.indexOf(u8, json, "\"name\"") orelse return null;
+    return extractFieldValue(json[name_pos..], "\"name\"");
 }
 
-fn extractSimpleJsonInt(json: []const u8, start: usize, field: []const u8) ?u32 {
-    const field_pos = std.mem.indexOfPos(u8, json, start, field) orelse return null;
-    if (field_pos - start > 2000) return null;
+/// Extract integer value from "fieldName":123
+fn extractFieldInt(json: []const u8, field: []const u8) ?u32 {
+    const field_pos = std.mem.indexOf(u8, json, field) orelse return null;
     const colon = std.mem.indexOfScalarPos(u8, json, field_pos + field.len, ':') orelse return null;
     var i = colon + 1;
     while (i < json.len and json[i] == ' ') : (i += 1) {}
