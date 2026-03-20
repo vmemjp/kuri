@@ -137,17 +137,22 @@ pub fn main() !void {
     if (std.mem.eql(u8, cmd, "go")) {
         if (rest.len < 1) fatal("go: requires <url>\n", .{});
         try cmdNavigate(arena, &client, rest[0]);
+        std.Thread.sleep(1_000_000_000); // let page load
+        autoSnap(arena, &client, &session);
     } else if (std.mem.eql(u8, cmd, "snap")) {
         try cmdSnap(arena, &client, &session, rest);
     } else if (std.mem.eql(u8, cmd, "click")) {
         if (rest.len < 1) fatal("click: requires <ref>\n", .{});
         try cmdAction(arena, &client, &session, "click", rest[0], null);
+        autoSnap(arena, &client, &session);
     } else if (std.mem.eql(u8, cmd, "type") or std.mem.eql(u8, cmd, "fill")) {
         if (rest.len < 2) fatal("{s}: requires <ref> <text>\n", .{cmd});
         try cmdAction(arena, &client, &session, cmd, rest[0], rest[1]);
+        autoSnap(arena, &client, &session);
     } else if (std.mem.eql(u8, cmd, "select")) {
         if (rest.len < 2) fatal("select: requires <ref> <value>\n", .{});
         try cmdAction(arena, &client, &session, "select", rest[0], rest[1]);
+        autoSnap(arena, &client, &session);
     } else if (std.mem.eql(u8, cmd, "hover")) {
         if (rest.len < 1) fatal("hover: requires <ref>\n", .{});
         try cmdAction(arena, &client, &session, "hover", rest[0], null);
@@ -156,6 +161,9 @@ pub fn main() !void {
         try cmdAction(arena, &client, &session, "focus", rest[0], null);
     } else if (std.mem.eql(u8, cmd, "scroll")) {
         try cmdScroll(arena, &client);
+        autoSnap(arena, &client, &session);
+    } else if (std.mem.eql(u8, cmd, "viewport")) {
+        try cmdViewport(arena, &client, rest);
     } else if (std.mem.eql(u8, cmd, "viewport")) {
         try cmdViewport(arena, &client, rest);
     } else if (std.mem.eql(u8, cmd, "eval")) {
@@ -435,6 +443,45 @@ fn cmdSnap(arena: std.mem.Allocator, client: *CdpClient, session: *Session, flag
     // Default: compact text-tree (role "name" @ref)
     const compact = a11y.formatCompact(snapshot, arena) catch "error\n";
     stdout.writeAll(compact) catch {};
+}
+
+/// Auto-snap: get URL/title + interactive snapshot. Used after actions and navigation.
+fn autoSnap(arena: std.mem.Allocator, client: *CdpClient, session: *Session) void {
+    // Get current URL + title
+    const url_resp = client.send(arena, protocol.Methods.runtime_evaluate,
+        "{\"expression\":\"JSON.stringify({url:location.href,title:document.title})\",\"returnByValue\":true}") catch null;
+    if (url_resp) |resp| {
+        const val = extractCdpValue(resp);
+        const unescaped = unescapeJson(arena, val);
+        std.fs.File.stdout().writeAll(unescaped) catch {};
+        std.fs.File.stdout().writeAll("\n") catch {};
+    }
+
+    // Interactive snap
+    const raw = client.send(arena, protocol.Methods.accessibility_get_full_tree, null) catch return;
+    const nodes = parseA11yNodes(arena, raw) catch return;
+    const opts = a11y.SnapshotOpts{
+        .filter_interactive = true,
+        .filter_semantic = false,
+        .compact = true,
+        .json_output = false,
+        .format_text = false,
+        .max_depth = null,
+    };
+    const snapshot = a11y.buildSnapshot(nodes, opts, arena) catch return;
+
+    // Save refs
+    session.refs.clearRetainingCapacity();
+    for (snapshot) |node| {
+        if (node.backend_node_id) |bid| {
+            const owned_ref = arena.dupe(u8, node.ref) catch continue;
+            session.refs.put(owned_ref, bid) catch {};
+        }
+    }
+    saveSession(arena, session) catch {};
+
+    const compact = a11y.formatCompact(snapshot, arena) catch return;
+    std.fs.File.stdout().writeAll(compact) catch {};
 }
 
 fn cmdAction(arena: std.mem.Allocator, client: *CdpClient, session: *Session, action: []const u8, ref: []const u8, value: ?[]const u8) !void {
@@ -1236,10 +1283,15 @@ fn extractCdpValue(resp: []const u8) []const u8 {
     const pos = std.mem.indexOf(u8, resp, marker) orelse return resp;
     const after = pos + marker.len;
     if (after >= resp.len) return resp;
-    // String value: "value":"..."
+    // String value: "value":"..." — skip escaped quotes
     if (resp[after] == '"') {
-        const end = std.mem.indexOfPos(u8, resp, after + 1, "\"") orelse return resp;
-        return resp[after + 1 .. end];
+        var i = after + 1;
+        while (i < resp.len) {
+            if (resp[i] == '\\') { i += 2; continue; }
+            if (resp[i] == '"') return resp[after + 1 .. i];
+            i += 1;
+        }
+        return resp;
     }
     // Non-string value (number, bool, null, object): find end
     const end = std.mem.indexOfAny(u8, resp[after..], "}") orelse return resp;
