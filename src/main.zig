@@ -67,6 +67,7 @@ test {
     _ = @import("util/json.zig");
     _ = @import("test/harness.zig");
     _ = @import("chrome/launcher.zig");
+    _ = @import("chrome/extensions.zig");
     _ = @import("test/integration.zig");
     _ = @import("storage/local.zig");
     _ = @import("storage/auth_profiles.zig");

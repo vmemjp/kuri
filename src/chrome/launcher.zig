@@ -1,5 +1,6 @@
 const std = @import("std");
 const config = @import("../bridge/config.zig");
+const extensions_mod = @import("extensions.zig");
 
 /// 🧁 Chrome lifecycle manager — launch, supervise, restart.
 /// Handles spawning headless Chrome with CDP debugging port,
@@ -14,6 +15,8 @@ pub const Launcher = struct {
     mode: Mode,
     extensions: ?[]const u8,
     headless: bool,
+    state_dir: []const u8,
+    builtin_ext_path: ?[]const u8,
 
     pub const Mode = enum {
         managed, // we launched Chrome ourselves
@@ -66,6 +69,8 @@ pub const Launcher = struct {
             .mode = mode,
             .extensions = cfg.extensions,
             .headless = cfg.headless,
+            .state_dir = cfg.state_dir,
+            .builtin_ext_path = null,
         };
     }
 
@@ -101,6 +106,24 @@ pub const Launcher = struct {
             return error.ChromeNotFound;
         };
 
+        // Extract builtin extension to disk and prepend to extensions list
+        const builtin_path = extensions_mod.extractBuiltinExtension(self.allocator, self.state_dir) catch |err| blk: {
+            std.log.warn("failed to extract builtin extension: {}, continuing without it", .{err});
+            break :blk null;
+        };
+        if (builtin_path) |bp| {
+            self.builtin_ext_path = bp;
+        }
+
+        // Merge builtin extension with user-configured extensions
+        const merged_extensions: ?[]const u8 = if (builtin_path) |bp|
+            extensions_mod.prependBuiltinExtension(self.allocator, bp, self.extensions) catch null
+        else
+            null;
+        defer if (merged_extensions) |m| self.allocator.free(m);
+
+        const effective_extensions = merged_extensions orelse self.extensions;
+
         // Allocate the port flag on the heap so it outlives this function.
         // Previously this was written into ws_url_buf which gets overwritten
         // by storeWsUrl(), causing a dangling pointer in the Child struct on Linux.
@@ -124,8 +147,8 @@ pub const Launcher = struct {
         try argv_list.append(self.allocator, "--remote-allow-origins=*");
         try argv_list.append(self.allocator, port_flag);
 
-        // Build and append extension flags if configured
-        const ext_flags: ?[][]u8 = if (self.extensions) |ext_str|
+        // Build and append extension flags (builtin + user-configured)
+        const ext_flags: ?[][]u8 = if (effective_extensions) |ext_str|
             try buildExtensionFlags(self.allocator, ext_str)
         else
             null;
@@ -165,6 +188,9 @@ pub const Launcher = struct {
             child.id,
             self.cdp_port,
         });
+        if (builtin_path != null) {
+            std.log.info("builtin extension loaded from {s}", .{self.builtin_ext_path.?});
+        }
         // Give Chrome a moment to start
         std.Thread.sleep(500 * std.time.ns_per_ms);
     }
@@ -212,6 +238,10 @@ pub const Launcher = struct {
             _ = child.kill() catch {};
             _ = child.wait() catch {};
             self.child = null;
+        }
+        if (self.builtin_ext_path) |bp| {
+            self.allocator.free(bp);
+            self.builtin_ext_path = null;
         }
     }
 
@@ -501,9 +531,10 @@ test "Launcher init managed mode" {
         .extensions = null,
         .headless = true,
     };
-    const launcher = Launcher.init(std.testing.allocator, cfg);
-    try std.testing.expectEqual(Launcher.Mode.managed, launcher.mode);
-    try std.testing.expectEqual(@as(?[]const u8, null), launcher.extensions);
+    const launcher_inst = Launcher.init(std.testing.allocator, cfg);
+    try std.testing.expectEqual(Launcher.Mode.managed, launcher_inst.mode);
+    try std.testing.expectEqual(@as(?[]const u8, null), launcher_inst.extensions);
+    try std.testing.expectEqual(@as(?[]const u8, null), launcher_inst.builtin_ext_path);
 }
 
 test "Launcher init external mode" {
@@ -519,8 +550,8 @@ test "Launcher init external mode" {
         .extensions = null,
         .headless = true,
     };
-    const launcher = Launcher.init(std.testing.allocator, cfg);
-    try std.testing.expectEqual(Launcher.Mode.external, launcher.mode);
+    const launcher_inst = Launcher.init(std.testing.allocator, cfg);
+    try std.testing.expectEqual(Launcher.Mode.external, launcher_inst.mode);
 }
 
 test "Launcher init with extensions" {
@@ -536,13 +567,13 @@ test "Launcher init with extensions" {
         .extensions = "/path/to/ext1,/path/to/ext2",
         .headless = true,
     };
-    const launcher = Launcher.init(std.testing.allocator, cfg);
-    try std.testing.expectEqual(Launcher.Mode.managed, launcher.mode);
-    try std.testing.expectEqualStrings("/path/to/ext1,/path/to/ext2", launcher.extensions.?);
+    const launcher_inst = Launcher.init(std.testing.allocator, cfg);
+    try std.testing.expectEqual(Launcher.Mode.managed, launcher_inst.mode);
+    try std.testing.expectEqualStrings("/path/to/ext1,/path/to/ext2", launcher_inst.extensions.?);
 }
 
 test "healthCheck returns not alive for unbound port" {
-    var launcher = Launcher{
+    var launcher_inst = Launcher{
         .allocator = std.testing.allocator,
         .cdp_port = 19876,
         .child = null,
@@ -552,8 +583,10 @@ test "healthCheck returns not alive for unbound port" {
         .mode = .managed,
         .extensions = null,
         .headless = true,
+        .state_dir = ".kuri",
+        .builtin_ext_path = null,
     };
-    const status = launcher.healthCheck();
+    const status = launcher_inst.healthCheck();
     try std.testing.expect(!status.alive);
     try std.testing.expect(status.ws_url == null);
 }
