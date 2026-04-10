@@ -222,26 +222,23 @@ pub const WebSocketClient = struct {
 
         // Handle ping - send pong
         if (opcode == 0x9) {
-            if (payload_len <= self.read_buf.len) {
-                const len: usize = @intCast(payload_len);
-                self.readExact(self.read_buf[0..len]) catch return Error.ReadFailed;
-                self.writeFrame(0xA, self.read_buf[0..len]) catch {};
-            }
+            if (payload_len > std.math.maxInt(usize) or payload_len > self.read_buf.len) return self.readFrame();
+            const len: usize = @intCast(payload_len);
+            self.readExact(self.read_buf[0..len]) catch return Error.ReadFailed;
+            self.writeFrame(0xA, self.read_buf[0..len]) catch {};
             return self.readFrame(); // recurse for next real message
         }
 
         // Skip pong
         if (opcode == 0xA) {
-            if (payload_len > 0) {
+            if (payload_len > 0 and payload_len <= std.math.maxInt(usize) and payload_len <= self.read_buf.len) {
                 const len: usize = @intCast(payload_len);
-                if (len <= self.read_buf.len) {
-                    self.readExact(self.read_buf[0..len]) catch return Error.ReadFailed;
-                }
+                self.readExact(self.read_buf[0..len]) catch return Error.ReadFailed;
             }
             return self.readFrame();
         }
 
-        if (payload_len > self.read_buf.len) return Error.MessageTooLarge;
+        if (payload_len > std.math.maxInt(usize) or payload_len > self.read_buf.len) return Error.MessageTooLarge;
         const len: usize = @intCast(payload_len);
 
         // Read mask key if present (server shouldn't mask, but handle it)
@@ -291,7 +288,7 @@ pub const WebSocketClient = struct {
         }
         if (opcode == 0x9 or opcode == 0xA) {
             // Skip ping/pong payload
-            if (payload_len > 0 and payload_len <= self.read_buf.len) {
+            if (payload_len > 0 and payload_len <= std.math.maxInt(usize) and payload_len <= self.read_buf.len) {
                 const len: usize = @intCast(payload_len);
                 self.readExact(self.read_buf[0..len]) catch return Error.ReadFailed;
                 if (opcode == 0x9) self.writeFrame(0xA, self.read_buf[0..len]) catch {};

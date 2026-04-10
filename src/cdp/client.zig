@@ -254,7 +254,7 @@ pub const CdpClient = struct {
 fn eventMatchesMethod(event_json: []const u8, method: []const u8) bool {
     var match_buf: [256]u8 = undefined;
     const match_pattern = std.fmt.bufPrint(&match_buf, "\"method\":\"{s}\"", .{method}) catch {
-        return std.mem.indexOf(u8, event_json, method) != null;
+        return false;
     };
     return std.mem.indexOf(u8, event_json, match_pattern) != null;
 }
