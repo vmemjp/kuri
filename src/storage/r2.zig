@@ -1,5 +1,4 @@
 const std = @import("std");
-const compat = @import("../compat.zig");
 
 pub const R2Config = struct {
     endpoint_url: []const u8,
@@ -9,10 +8,10 @@ pub const R2Config = struct {
 };
 
 pub fn loadConfig() ?R2Config {
-    const endpoint = compat.getenv("R2_ENDPOINT_URL") orelse return null;
-    const access_key = compat.getenv("R2_ACCESS_KEY") orelse return null;
-    const secret_key = compat.getenv("R2_SECRET_KEY") orelse return null;
-    const bucket = compat.getenv("R2_BUCKET_NAME") orelse return null;
+    const endpoint = std.posix.getenv("R2_ENDPOINT_URL") orelse return null;
+    const access_key = std.posix.getenv("R2_ACCESS_KEY") orelse return null;
+    const secret_key = std.posix.getenv("R2_SECRET_KEY") orelse return null;
+    const bucket = std.posix.getenv("R2_BUCKET_NAME") orelse return null;
 
     return .{
         .endpoint_url = endpoint,
@@ -51,7 +50,7 @@ pub fn generateObjectKey(url: []const u8, uuid: []const u8, ext: []const u8, all
     if (std.mem.indexOfScalar(u8, domain, '/')) |idx| {
         domain = domain[0..idx];
     }
-    const timestamp = compat.timestampSeconds();
+    const timestamp = std.time.timestamp();
     return std.fmt.allocPrint(allocator, "{s}/{s}/{d}.{s}", .{ uuid, domain, timestamp, ext });
 }
 

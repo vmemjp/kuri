@@ -1,7 +1,6 @@
 const std = @import("std");
 const validator = @import("validator.zig");
 const CdpClient = @import("../cdp/client.zig").CdpClient;
-const compat = @import("../compat.zig");
 
 pub const FetchError = error{
     ValidationFailed,
@@ -54,7 +53,7 @@ pub fn fetchPage(
         // Exponential backoff for retries (no delay on first attempt)
         if (attempt > 0) {
             const delay_ms = retryDelayMs(attempt - 1);
-            compat.threadSleep(delay_ms * std.time.ns_per_ms);
+            std.Thread.sleep(delay_ms * std.time.ns_per_ms);
         }
 
         // Navigate to URL via CDP Page.navigate
@@ -165,7 +164,7 @@ pub fn fetchPageGeneric(client: anytype, url: []const u8, _: FetchOpts, rate_lim
     _ = client.send(arena, "Page.navigate", nav_params) catch return FetchError.FetchFailed;
 
     // Brief wait for page load (50ms baseline — CDP navigate is async)
-    compat.threadSleep(50 * std.time.ns_per_ms);
+    std.Thread.sleep(50 * std.time.ns_per_ms);
 
     // Extract HTML via Runtime.evaluate
     const eval_params = "{\"expression\":\"document.documentElement.outerHTML\",\"returnByValue\":true}";
@@ -188,7 +187,7 @@ pub fn fetchPageWithRetry(client: anytype, url: []const u8, opts: FetchOpts, rat
             return res;
         } else |err| {
             if (err != FetchError.FetchFailed) return err;
-            compat.threadSleep(retryDelayNs(attempt));
+            std.Thread.sleep(retryDelayNs(attempt));
         }
     }
     return FetchError.FetchFailed;
@@ -205,7 +204,7 @@ pub const RateLimiter = struct {
         return .{
             .tokens = std.atomic.Value(u32).init(max_tokens),
             .max_tokens = max_tokens,
-            .last_refill = std.atomic.Value(i64).init(@intCast(compat.nanoTimestamp())),
+            .last_refill = std.atomic.Value(i64).init(@intCast(std.time.nanoTimestamp())),
             .refill_interval_ns = @as(i64, refill_interval_ms) * std.time.ns_per_ms,
         };
     }
@@ -225,7 +224,7 @@ pub const RateLimiter = struct {
     }
 
     fn maybeRefill(self: *RateLimiter) void {
-        const now: i64 = @intCast(compat.nanoTimestamp());
+        const now: i64 = @intCast(std.time.nanoTimestamp());
         const last = self.last_refill.load(.acquire);
         if (now - last >= self.refill_interval_ns) {
             if (self.last_refill.cmpxchgWeak(last, now, .release, .monotonic) == null) {

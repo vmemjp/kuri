@@ -4,6 +4,7 @@ const std = @import("std");
 /// Handles common HTML elements: headings, paragraphs, links, lists, code blocks, emphasis.
 pub fn htmlToMarkdown(html: []const u8, allocator: std.mem.Allocator) ![]const u8 {
     var buf: std.ArrayList(u8) = .empty;
+    const writer = buf.writer(allocator);
 
     var i: usize = 0;
     while (i < html.len) {
@@ -17,44 +18,44 @@ pub fn htmlToMarkdown(html: []const u8, allocator: std.mem.Allocator) ![]const u
             const tag_name = extractTagName(if (is_close) tag_content[1..] else tag_content);
 
             if (std.mem.eql(u8, tag_name, "h1")) {
-                if (!is_close) try buf.appendSlice(allocator, "# ") else try buf.appendSlice(allocator, "\n\n");
+                if (!is_close) try writer.writeAll("# ") else try writer.writeAll("\n\n");
             } else if (std.mem.eql(u8, tag_name, "h2")) {
-                if (!is_close) try buf.appendSlice(allocator, "## ") else try buf.appendSlice(allocator, "\n\n");
+                if (!is_close) try writer.writeAll("## ") else try writer.writeAll("\n\n");
             } else if (std.mem.eql(u8, tag_name, "h3")) {
-                if (!is_close) try buf.appendSlice(allocator, "### ") else try buf.appendSlice(allocator, "\n\n");
+                if (!is_close) try writer.writeAll("### ") else try writer.writeAll("\n\n");
             } else if (std.mem.eql(u8, tag_name, "h4")) {
-                if (!is_close) try buf.appendSlice(allocator, "#### ") else try buf.appendSlice(allocator, "\n\n");
+                if (!is_close) try writer.writeAll("#### ") else try writer.writeAll("\n\n");
             } else if (std.mem.eql(u8, tag_name, "h5")) {
-                if (!is_close) try buf.appendSlice(allocator, "##### ") else try buf.appendSlice(allocator, "\n\n");
+                if (!is_close) try writer.writeAll("##### ") else try writer.writeAll("\n\n");
             } else if (std.mem.eql(u8, tag_name, "h6")) {
-                if (!is_close) try buf.appendSlice(allocator, "###### ") else try buf.appendSlice(allocator, "\n\n");
+                if (!is_close) try writer.writeAll("###### ") else try writer.writeAll("\n\n");
             } else if (std.mem.eql(u8, tag_name, "p")) {
-                if (is_close) try buf.appendSlice(allocator, "\n\n");
+                if (is_close) try writer.writeAll("\n\n");
             } else if (std.mem.eql(u8, tag_name, "br")) {
-                try buf.appendSlice(allocator, "\n");
+                try writer.writeAll("\n");
             } else if (std.mem.eql(u8, tag_name, "strong") or std.mem.eql(u8, tag_name, "b")) {
-                try buf.appendSlice(allocator, "**");
+                try writer.writeAll("**");
             } else if (std.mem.eql(u8, tag_name, "em") or std.mem.eql(u8, tag_name, "i")) {
-                try buf.appendSlice(allocator, "*");
+                try writer.writeAll("*");
             } else if (std.mem.eql(u8, tag_name, "code")) {
-                try buf.appendSlice(allocator, "`");
+                try writer.writeAll("`");
             } else if (std.mem.eql(u8, tag_name, "pre")) {
-                if (!is_close) try buf.appendSlice(allocator, "\n```\n") else try buf.appendSlice(allocator, "\n```\n\n");
+                if (!is_close) try writer.writeAll("\n```\n") else try writer.writeAll("\n```\n\n");
             } else if (std.mem.eql(u8, tag_name, "li")) {
-                if (!is_close) try buf.appendSlice(allocator, "- ");
-                if (is_close) try buf.appendSlice(allocator, "\n");
+                if (!is_close) try writer.writeAll("- ");
+                if (is_close) try writer.writeAll("\n");
             } else if (std.mem.eql(u8, tag_name, "blockquote")) {
-                if (!is_close) try buf.appendSlice(allocator, "> ");
+                if (!is_close) try writer.writeAll("> ");
             } else if (std.mem.eql(u8, tag_name, "hr")) {
-                try buf.appendSlice(allocator, "\n---\n\n");
+                try writer.writeAll("\n---\n\n");
             } else if (std.mem.eql(u8, tag_name, "a")) {
                 if (!is_close) {
                     if (extractAttr(tag_content, "href")) |href| {
-                        try buf.appendSlice(allocator, "[");
+                        try writer.writeAll("[");
                         if (std.mem.indexOf(u8, html[tag_end + 1 ..], "</a>")) |close_idx| {
                             const text = html[tag_end + 1 .. tag_end + 1 + close_idx];
-                            try buf.appendSlice(allocator, text);
-                            try buf.print(allocator, "]({s})", .{href});
+                            try writer.writeAll(text);
+                            try writer.print("]({s})", .{href});
                             i = tag_end + 1 + close_idx + 4;
                             continue;
                         }
@@ -74,68 +75,68 @@ pub fn htmlToMarkdown(html: []const u8, allocator: std.mem.Allocator) ![]const u
         } else {
             if (html[i] == '&') {
                 if (std.mem.startsWith(u8, html[i..], "&amp;")) {
-                    try buf.append(allocator, '&');
+                    try writer.writeByte('&');
                     i += 5;
                 } else if (std.mem.startsWith(u8, html[i..], "&lt;")) {
-                    try buf.append(allocator, '<');
+                    try writer.writeByte('<');
                     i += 4;
                 } else if (std.mem.startsWith(u8, html[i..], "&gt;")) {
-                    try buf.append(allocator, '>');
+                    try writer.writeByte('>');
                     i += 4;
                 } else if (std.mem.startsWith(u8, html[i..], "&quot;")) {
-                    try buf.append(allocator, '"');
+                    try writer.writeByte('"');
                     i += 6;
                 } else if (std.mem.startsWith(u8, html[i..], "&nbsp;")) {
-                    try buf.append(allocator, ' ');
+                    try writer.writeByte(' ');
                     i += 6;
                 } else if (std.mem.startsWith(u8, html[i..], "&apos;")) {
-                    try buf.append(allocator, '\'');
+                    try writer.writeByte('\'');
                     i += 6;
                 } else if (std.mem.startsWith(u8, html[i..], "&rsquo;") or std.mem.startsWith(u8, html[i..], "&lsquo;")) {
-                    try buf.append(allocator, '\'');
+                    try writer.writeByte('\'');
                     i += 7;
                 } else if (std.mem.startsWith(u8, html[i..], "&rdquo;") or std.mem.startsWith(u8, html[i..], "&ldquo;")) {
-                    try buf.append(allocator, '"');
+                    try writer.writeByte('"');
                     i += 7;
                 } else if (std.mem.startsWith(u8, html[i..], "&mdash;")) {
-                    try buf.appendSlice(allocator, "—");
+                    try writer.writeAll("—");
                     i += 7;
                 } else if (std.mem.startsWith(u8, html[i..], "&ndash;")) {
-                    try buf.appendSlice(allocator, "–");
+                    try writer.writeAll("–");
                     i += 7;
                 } else if (std.mem.startsWith(u8, html[i..], "&hellip;")) {
-                    try buf.appendSlice(allocator, "…");
+                    try writer.writeAll("…");
                     i += 8;
                 } else if (std.mem.startsWith(u8, html[i..], "&copy;")) {
-                    try buf.appendSlice(allocator, "©");
+                    try writer.writeAll("©");
                     i += 6;
                 } else if (std.mem.startsWith(u8, html[i..], "&reg;")) {
-                    try buf.appendSlice(allocator, "®");
+                    try writer.writeAll("®");
                     i += 5;
                 } else if (std.mem.startsWith(u8, html[i..], "&trade;")) {
-                    try buf.appendSlice(allocator, "™");
+                    try writer.writeAll("™");
                     i += 7;
                 } else if (decodeNumericEntity(html[i..])) |decoded| {
                     // Numeric entities: &#123; (decimal) or &#x7b; (hex)
                     if (decoded.codepoint < 128) {
-                        try buf.append(allocator, @intCast(decoded.codepoint));
+                        try writer.writeByte(@intCast(decoded.codepoint));
                     } else {
                         // Encode as UTF-8
                         var utf8_buf: [4]u8 = undefined;
                         const utf8_len = std.unicode.utf8Encode(@intCast(decoded.codepoint), &utf8_buf) catch {
-                            try buf.append(allocator, '?');
+                            try writer.writeByte('?');
                             i += decoded.len;
                             continue;
                         };
-                        try buf.appendSlice(allocator, utf8_buf[0..utf8_len]);
+                        try writer.writeAll(utf8_buf[0..utf8_len]);
                     }
                     i += decoded.len;
                 } else {
-                    try buf.append(allocator, html[i]);
+                    try writer.writeByte(html[i]);
                     i += 1;
                 }
             } else {
-                try buf.append(allocator, html[i]);
+                try writer.writeByte(html[i]);
                 i += 1;
             }
         }

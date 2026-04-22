@@ -1,5 +1,4 @@
 const std = @import("std");
-const compat = @import("../compat.zig");
 const CdpClient = @import("../cdp/client.zig").CdpClient;
 const HarRecorder = @import("../cdp/har.zig").HarRecorder;
 const A11yNode = @import("../snapshot/a11y.zig").A11yNode;
@@ -47,7 +46,7 @@ pub const Bridge = struct {
     cdp_clients: std.StringHashMap(*CdpClient),
     har_recorders: std.StringHashMap(*HarRecorder),
     debug_script_ids: std.StringHashMap([]const u8),
-    mu: compat.PthreadRwLock,
+    mu: std.Thread.RwLock,
 
     pub fn init(allocator: std.mem.Allocator) Bridge {
         return .{
@@ -251,15 +250,16 @@ pub const Bridge = struct {
         defer self.mu.unlockShared();
 
         var json_buf: std.ArrayList(u8) = .empty;
-        try json_buf.appendSlice(allocator, "[");
+        const writer = json_buf.writer(allocator);
+        try writer.writeAll("[");
         var it = self.tabs.valueIterator();
         var first = true;
         while (it.next()) |tab| {
-            if (!first) try json_buf.appendSlice(allocator, ",");
+            if (!first) try writer.writeAll(",");
             first = false;
-            try json_buf.print(allocator, "{{\"id\":\"{s}\",\"url\":\"{s}\",\"title\":\"{s}\",\"ws_url\":\"{s}\"}}", .{ tab.id, tab.url, tab.title, tab.ws_url });
+            try writer.print("{{\"id\":\"{s}\",\"url\":\"{s}\",\"title\":\"{s}\",\"ws_url\":\"{s}\"}}", .{ tab.id, tab.url, tab.title, tab.ws_url });
         }
-        try json_buf.appendSlice(allocator, "]");
+        try writer.writeAll("]");
         return json_buf.toOwnedSlice(allocator);
     }
 
@@ -286,8 +286,8 @@ pub const Bridge = struct {
                 .url = url,
                 .title = title,
                 .ws_url = ws_url,
-                .created_at = compat.timestampSeconds(),
-                .last_accessed = compat.timestampSeconds(),
+                .created_at = std.time.timestamp(),
+                .last_accessed = std.time.timestamp(),
             });
             count += 1;
             pos = obj_end + 1;
