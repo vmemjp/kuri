@@ -5,14 +5,14 @@ const Bridge = @import("bridge/bridge.zig").Bridge;
 const launcher = @import("chrome/launcher.zig");
 
 pub fn main() !void {
-    var gpa_impl: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    var gpa_impl: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa_impl.deinit();
     const gpa = gpa_impl.allocator();
 
     const cfg = config.load();
     var runtime_cfg = cfg;
 
-    std.log.info("kuri v0.1.0", .{});
+    std.log.info("kuri v0.3.1", .{});
     std.log.info("listening on {s}:{d}", .{ cfg.host, cfg.port });
 
     // Chrome lifecycle management

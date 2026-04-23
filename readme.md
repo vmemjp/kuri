@@ -7,7 +7,7 @@
 <p align="center">
   <a href="https://github.com/justrach/kuri/releases/latest"><img src="https://img.shields.io/github/v/release/justrach/kuri?style=flat-square" alt="Release"></a>
   <a href="https://github.com/justrach/kuri/blob/main/LICENSE"><img src="https://img.shields.io/github/license/justrach/kuri?style=flat-square" alt="License"></a>
-  <img src="https://img.shields.io/badge/zig-0.15.2-f7a41d?style=flat-square" alt="Zig">
+  <img src="https://img.shields.io/badge/zig-0.16.0-f7a41d?style=flat-square" alt="Zig">
   <img src="https://img.shields.io/badge/node__modules-0_files-brightgreen?style=flat-square" alt="node_modules">
   <img src="https://img.shields.io/badge/status-experimental-orange?style=flat-square" alt="status">
 </p>
@@ -18,7 +18,7 @@ CDP automation · A11y snapshots · HAR recording · Standalone fetcher · Inter
 
 [Quick Start](#-quick-start) · [Benchmarks](#-benchmarks) · [kuri-agent](#-kuri-agent) · [Security Testing](#-security-testing) · [API](#-http-api) · [Changelog](CHANGELOG.md)
 
-> **Why teams switch to Kuri:** 464 KB binary, ~3 ms cold start. On Google Flights, a full agent loop (go→snap→click→snap→eval) costs **4,110 tokens** vs **4,880** for agent-browser — **16% less per cycle**, compounding across multi-step tasks.
+> **Why teams switch to Kuri:** current Apple Silicon `ReleaseFast` builds stay sub-2 MB per binary, and a fresh Google Flights rerun on 2026-04-23 measured **3,392 tokens** for a full `kuri-agent` loop (`go→snap→click→snap→eval`). Cross-tool deltas should be rerun in the same environment before quoting a percentage.
 
 ---
 
@@ -32,51 +32,47 @@ Most browser tooling was built for QA engineers. Kuri is built for agent loops: 
 
 ### Snapshot tokens: Google Flights `SIN → TPE`
 
-Same Chrome session, measured with `tiktoken` `cl100k_base`. Run `./bench/token_benchmark.sh` to reproduce.
+Fresh rerun on 2026-04-23 in this workspace, measured with `./bench/token_benchmark.sh` and `tiktoken`.
+Only `kuri` was rerun here; `agent-browser` and `lightpanda` were not installed, so the old cross-tool rows were dropped instead of leaving stale comparison numbers in place.
 
 | Tool / Mode | Bytes | Tokens | vs `kuri` | Note |
 |---|---:|---:|---:|---|
-| `kuri snap` (compact) | 13,479 | **4,328** | baseline | |
-| `kuri snap --interactive` | 7,024 | **1,927** | 0.4x | Best for agent loops |
-| `kuri snap --json` | 102,124 | 31,280 | 7.2x | Old default |
-| `agent-browser snapshot` | 17,103 | 4,641 | 1.1x | |
-| `agent-browser snapshot -i` | 8,704 | 2,425 | 0.6x | |
-| `lightpanda semantic_tree` | 67,830 | 26,244 | 6.1x | ⚠ no JS — raw DOM |
-| `lightpanda semantic_tree_text` | 1,909 | 507 | 0.1x | ⚠ no JS — empty shell |
+| `kuri snap` (compact) | 5,855 | **1,540** | baseline | |
+| `kuri snap --interactive` | 2,694 | **795** | 0.5x | Best for agent loops |
+| `kuri snap --json` | 39,180 | 11,221 | 7.3x | Legacy high-overhead format |
 
 ### Full workflow cost: `go → snap → click → snap → eval`
 
 | Tool | Tokens per cycle |
 |---|---:|
-| **kuri-agent** | **4,110** |
-| agent-browser | 4,880 |
+| **kuri-agent** | **3,392** |
 
-kuri saves **16% tokens per workflow cycle** — compounding across multi-step tasks.
+This rerun came in lower than the previous README sample (`4,110`), so the old benchmark copy was stale.
 
-Action responses are flat JSON (`{"ok":true}`) instead of nested CDP, which adds up:
-`click` = 9 tokens, `back` = 5 tokens, `scroll` = 5 tokens.
+To refresh the full comparison table, install the optional tools used by `bench/token_benchmark.sh` and rerun it in the same Chrome session.
 
-> **Why lightpanda scores low:** Lightpanda can't execute JS-heavy SPAs. Google Flights renders via client-side `fetch()` — lightpanda returns a 507-token empty nav shell with zero flight data. The low token count is a failed render, not efficiency.
+### Binary size and memory
 
-### Small binary, fast start
+Measured on Apple M4 Pro, macOS 26.4.1. Current binaries were built with `-Doptimize=ReleaseFast`.
 
-Measured on Apple M3 Pro, macOS 15.3. `kuri` built with `-Doptimize=ReleaseFast`. `agent-browser` v0.20.0.
+| Binary | Current size |
+|---|---:|
+| `kuri` | 886,920 B (866 KiB) |
+| `kuri-agent` | 594,984 B (581 KiB) |
+| `kuri-browse` | 1,053,176 B (1.00 MiB) |
+| `kuri-fetch` | 1,994,776 B (1.90 MiB) |
 
-```
-                        agent-browser        kuri             delta
-                        (v0.20)              (v0.2)
-─────────────────────────────────────────────────────────────────────
-CLI binary              6.0 MB               464 KB           13× smaller
-Cold start (--version)  3.4 ms               3.0 ms           ~same
-Install (npm)           33 MB                3.3 MB (3 bins)  10× smaller
-Commands                140+                 40+ endpoints    different focus
-Standalone fetcher      ❌                    ✅ kuri-fetch     no Chrome needed
-Terminal browser        ❌                    ✅ kuri-browse    interactive REPL
-JS engine (no Chrome)   ❌                    ✅ QuickJS        SSR-style DOM
-HTTP API server         ❌ (CLI only)         ✅ kuri           thread-per-conn
-```
+### RSS stayed flat across the Zig 0.16 migration
 
-> agent-browser exposes a broader browser-control surface. Kuri is intentionally narrower: a lightweight HTTP API and CLI stack optimized for agent integration, token economy, and deployment simplicity.
+Compared the shipped pre-0.16 macOS release artifact `v0.2.0-rc1` against the current `0.3.1` `ReleaseFast` build over 7 runs with `/usr/bin/time -l`.
+
+| Command | `v0.2.0-rc1` mean max RSS | `0.3.1` mean max RSS | Delta |
+|---|---:|---:|---:|
+| `kuri-fetch --version` | ~2.45 MiB | ~2.45 MiB | ~flat |
+| `kuri-browse --version` | ~2.45 MiB | ~2.45 MiB | ~flat |
+| `kuri-fetch --quiet --dump markdown http://example.com/` | 9.12 MiB | 9.17 MiB | +48 KiB (+0.5%) |
+
+Direct source rebuild with `zig 0.15.2` is currently blocked on this macOS release, so the baseline here is the shipped pre-0.16 artifact rather than a local rebuild.
 
 ## The Problem
 
@@ -117,7 +113,7 @@ Download the tarball for your platform from [GitHub Releases](https://github.com
 
 ### Build from source
 
-Requires [Zig ≥ 0.15.0](https://ziglang.org/download/).
+Requires [Zig ≥ 0.16.0](https://ziglang.org/download/).
 
 ```bash
 git clone https://github.com/justrach/kuri.git
@@ -130,14 +126,14 @@ zig build -Doptimize=ReleaseFast
 
 ## ⚡ Quick Start
 
-**Requirements:** [Zig ≥ 0.15.1](https://ziglang.org/download/) · Chrome/Chromium (for CDP mode)
+**Requirements:** [Zig ≥ 0.16.0](https://ziglang.org/download/) · Chrome/Chromium (for CDP mode)
 
 ```bash
 git clone https://github.com/justrach/kuri.git
 cd kuri
 
 zig build              # build everything
-zig build test         # run 230+ tests
+zig build test         # run 252+ tests
 
 # CDP mode — launches Chrome automatically
 ./zig-out/bin/kuri
@@ -212,10 +208,10 @@ All endpoints return JSON. Optional auth via `KURI_SECRET` env var.
 | `GET /navigate` | `tab_id`, `url` | Navigate tab to URL |
 | `GET /tab/new` | `url` | Create a new tab |
 | `GET /window/new` | `url` | Create a new window/tab target |
-| `GET /snapshot` | `tab_id`, `filter`, `format` | A11y tree snapshot with `@eN` refs |
+| `GET /snapshot` | `tab_id`, `filter`, `format` | A11y tree snapshot with `eN` refs |
 | `GET /text` | `tab_id` | Extract page text |
 | `GET /screenshot` | `tab_id`, `format`, `quality` | Capture screenshot (base64) |
-| `GET /action` | `tab_id`, `ref`, `kind` | Click/type/scroll by ref |
+| `GET /action` | `tab_id`, `ref`, `action`, `value` | Click/type/fill/select/scroll by ref |
 | `GET /evaluate` | `tab_id`, `expression` | Execute JavaScript |
 | `GET /close` | `tab_id` | Close tab + cleanup |
 
@@ -481,7 +477,7 @@ kuri-agent shot                      # saves ~/.kuri/screenshots/<ts>.png
 | `use <ws_url>` | Attach to a tab (saves session) |
 | `status` | Show current session |
 | `go <url>` | Navigate to URL |
-| `snap [--interactive] [--text] [--depth N]` | A11y snapshot, saves `@eN` refs |
+| `snap [--interactive] [--json] [--text] [--depth N]` | A11y snapshot, saves `eN` refs |
 | `click <ref>` | Click element by ref |
 | `type <ref> <text>` | Type into element |
 | `fill <ref> <text>` | Fill input value |
@@ -606,7 +602,7 @@ kuri-agent headers | jq '.headers | to_entries[] | select(.value == "(missing)")
 
 ```
 kuri/
-├── build.zig                  # Build system (Zig 0.15.2)
+├── build.zig                  # Build system (Zig 0.16.0)
 ├── build.zig.zon              # Package manifest + QuickJS dep
 ├── src/
 │   ├── main.zig               # CDP server entry point
@@ -633,7 +629,7 @@ kuri/
 │   ├── snapshot/
 │   │   ├── a11y.zig           # A11y tree with interactive filter
 │   │   ├── diff.zig           # Snapshot delta diffing
-│   │   └── ref_cache.zig      # @eN ref → node ID cache
+│   │   └── ref_cache.zig      # eN ref → node ID cache
 │   ├── crawler/
 │   │   ├── validator.zig      # SSRF defense, URL validation
 │   │   ├── markdown.zig       # HTML → Markdown (SIMD tag counting)
@@ -692,9 +688,9 @@ Open an issue before submitting a large PR so we can align on the approach.
 ```bash
 git clone https://github.com/justrach/kuri.git
 cd kuri
-zig build test         # 230+ tests must pass
-zig build test-fetch   # kuri-fetch tests (66 tests)
-zig build test-browse  # kuri-browse tests
+zig build test         # 252+ tests must pass
+zig build test-fetch   # kuri-fetch tests (69 tests)
+zig build test-browse  # kuri-browse tests (22 tests)
 ```
 
 See [CONTRIBUTORS.md](CONTRIBUTORS.md) for guidelines.
@@ -710,7 +706,7 @@ See [CONTRIBUTORS.md](CONTRIBUTORS.md) for guidelines.
 | [Pathik](https://github.com/justrach/pathik) | High-performance crawling patterns |
 | [QuickJS-ng](https://github.com/nicklausw/quickjs-ng) via [mitchellh/zig-quickjs-ng](https://github.com/mitchellh/zig-quickjs-ng) | JS engine for `kuri-fetch` |
 | [Lightpanda](https://github.com/lightpanda-io/browser) | Zig-native headless browser pioneer, CDP compatibility patterns |
-| [Zig 0.15.2](https://ziglang.org) | The whole stack |
+| [Zig 0.16.0](https://ziglang.org) | The whole stack |
 
 ## License
 

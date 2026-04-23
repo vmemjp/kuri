@@ -1,4 +1,6 @@
 const std = @import("std");
+const builtin = @import("builtin");
+const compat = @import("../compat.zig");
 
 pub const ValidationError = error{
     InvalidScheme,
@@ -55,14 +57,42 @@ pub fn validateOutputPath(path: []const u8) ValidationError!void {
     // For existing files, check symlink via lstat (race-free for existing paths).
     // Note: TOCTOU gap remains for files created between check and use.
     // Callers should open with O_NOFOLLOW where the OS supports it.
-    const stat = std.fs.cwd().statFile(path) catch |err| switch (err) {
-        error.FileNotFound => return,
-        else => return ValidationError.InvalidPath,
-    };
+    var path_buf: [4096]u8 = undefined;
+    if (path.len >= path_buf.len) return ValidationError.InvalidPath;
+    @memcpy(path_buf[0..path.len], path);
+    path_buf[path.len] = 0;
+    const path_z: [*:0]const u8 = path_buf[0..path.len :0];
 
-    if (stat.kind == .sym_link) {
+    if (pathIsSymlink(path_z)) {
         return ValidationError.SymlinkNotAllowed;
     }
+}
+
+fn pathIsSymlink(path_z: [*:0]const u8) bool {
+    return switch (builtin.os.tag) {
+        .linux => linuxPathIsSymlink(path_z),
+        else => posixPathIsSymlink(path_z),
+    };
+}
+
+fn linuxPathIsSymlink(path_z: [*:0]const u8) bool {
+    const linux = std.os.linux;
+    var statx = std.mem.zeroes(linux.Statx);
+    const flags = linux.AT.NO_AUTOMOUNT | linux.AT.SYMLINK_NOFOLLOW;
+
+    switch (linux.errno(linux.statx(linux.AT.FDCWD, path_z, flags, .{ .TYPE = true }, &statx))) {
+        .SUCCESS => return linux.S.ISLNK(statx.mode),
+        else => return false,
+    }
+}
+
+fn posixPathIsSymlink(path_z: [*:0]const u8) bool {
+    var stat_buf: std.c.Stat = undefined;
+    if (std.c.fstatat(std.c.AT.FDCWD, path_z, &stat_buf, std.c.AT.SYMLINK_NOFOLLOW) != 0) {
+        return false;
+    }
+
+    return std.c.S.ISLNK(@intCast(stat_buf.mode));
 }
 
 fn extractHost(url: []const u8) ?[]const u8 {
